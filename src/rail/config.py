@@ -1,0 +1,1 @@
+# Centralizes project configuration: catalog names, schema paths, and constants

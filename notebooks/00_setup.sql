@@ -1,0 +1,1 @@
+-- Initializes Unity Catalog objects: catalogs, schemas, and the landing volume
