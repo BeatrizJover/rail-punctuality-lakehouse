@@ -1,83 +1,132 @@
-# Ad-hoc backfill script for reprocessing historical data outside the regular pipeline
+"""
+Ad-hoc historical backfill utility.
+Extracts and lands targeted monthly datasets outside the primary automated pipeline.
+"""
 
 import os
 import sys
 
+import requests
+
+# Resolve repository root for local module imports
 REPO_ROOT = os.path.abspath(os.path.join(os.getcwd(), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import io
-import re
-import zipfile
-import requests
-
 from src.rail.config import LANDING, ODS_BASE, DATASET_MONTHLY
 
-START_YEAR, END_YEAR = 2024, 2026
+# Execution parameters
+# Target execution year and target months filter. Set BACKFILL_MONTHS to None for full-year processing.
+BACKFILL_YEAR = 2026
+BACKFILL_MONTHS = [7, 8]  # Type: Optional[List[int]]
 
 MONTHLY_DIR = f"{LANDING}/monthly"
 dbutils.fs.mkdirs(MONTHLY_DIR)
 
-# Inspect the dataset metadata to discover available attachments and their fields.
+# Query catalog API with server-side temporal filtering
+records_url = f"{ODS_BASE}/{DATASET_MONTHLY}/records"
+response = requests.get(
+    records_url,
+    params={
+        "limit": 20,
+        "refine": f'mois:"{BACKFILL_YEAR}"',
+    },
+    timeout=120,
+)
+response.raise_for_status()
 
-meta = requests.get(f"{ODS_BASE}/{DATASET_MONTHLY}/attachments", timeout=120)
-meta.raise_for_status()
-payload = meta.json()
+payload = response.json()
+records = payload.get("results", [])
 
-attachments = payload.get("attachments", payload) if isinstance(payload, dict) else payload
-print(f"{len(attachments)} attachments found. First few:")
-for item in attachments[:5]:
-    print(item)
+print(f"{len(records)} monthly records found for {BACKFILL_YEAR}")
 
-# Download files within the configured year range and extract CSVs from ZIP archives when required.
 
-YEAR_RE = re.compile(r"(20\d{2})")
+# Filter payload against target execution window
+selected = []
 
-def in_range(name: str) -> bool:
-    years = [int(y) for y in YEAR_RE.findall(name)]
-    return any(START_YEAR <= y <= END_YEAR for y in years)
+for record in records:
+    month = record.get("mois")
+    url = record.get("link_to_data")
 
-landed = 0
-for item in attachments:
-    name = item.get("title") or item.get("id") or ""
-    url = item.get("url") or item.get("href")
-
-    if not url or not in_range(name):
+    if not month or not url:
         continue
 
-    blob = requests.get(url, timeout=900)
-    blob.raise_for_status()
+    try:
+        year, month_number = map(int, month.split("-"))
+    except ValueError:
+        continue
 
-    is_zip = name.lower().endswith(".zip") or blob.content[:2] == b"PK"
+    if year != BACKFILL_YEAR:
+        continue
 
-    if is_zip:
-        with zipfile.ZipFile(io.BytesIO(blob.content)) as zf:
-            for member in zf.namelist():
-                if not member.lower().endswith(".csv"):
-                    continue
-                out = f"{MONTHLY_DIR}/{os.path.basename(member)}"
-                with zf.open(member) as src, open(out, "wb") as dst:
-                    dst.write(src.read())
-                landed += 1
-                print("extracted", out)
-    else:
-        out = f"{MONTHLY_DIR}/{os.path.basename(name)}"
-        with open(out, "wb") as dst:
-            dst.write(blob.content)
-        landed += 1
-        print("saved", out)
+    if BACKFILL_MONTHS is not None and month_number not in BACKFILL_MONTHS:
+        continue
 
-print(f"{landed} monthly files in {MONTHLY_DIR}")
+    selected.append((month, url))
 
-# Sanity check the landed files before ingestion:
+selected.sort()
 
-csvs = sorted(f for f in os.listdir(MONTHLY_DIR) if f.lower().endswith(".csv"))
-print(f"{len(csvs)} csv files")
+print(
+    f"{len(selected)} monthly files selected for {BACKFILL_YEAR}: "
+    f"{[m for m, _ in selected]}"
+)
+
+
+# Fetch and land missing raw files
+landed = 0
+
+# Cache existing directory state to prevent redundant storage API calls
+existing = dbutils.fs.ls(MONTHLY_DIR)
+existing_names = {os.path.basename(f.path) for f in existing}
+
+for month, url in selected:
+
+    filename = f"Data_raw_punctuality_{month.replace('-', '')}.csv"
+    output_path = f"{MONTHLY_DIR}/{filename}"
+
+    if filename in existing_names:
+        print(f"Already exists, skipping: {filename}")
+        continue
+
+    print(f"Downloading {month} -> {output_path}")
+
+    file_response = requests.get(url, timeout=900)
+    file_response.raise_for_status()
+
+    with open(output_path, "wb") as dst:
+        dst.write(file_response.content)
+
+    existing_names.add(filename)
+    landed += 1
+    print(f"Saved {output_path}")
+
+
+# Post-landing integrity verification
+csvs = sorted(
+    f.path
+    for f in dbutils.fs.ls(MONTHLY_DIR)
+    if f.path.lower().endswith(".csv")
+)
+
+print(f"\n{len(csvs)} CSV files in {MONTHLY_DIR}")
 
 if csvs:
-    with open(f"{MONTHLY_DIR}/{csvs[0]}", encoding="utf-8", errors="replace") as fh:
+
+    first_file = csvs[0]
+    local_path = first_file.replace("dbfs:", "")
+
+    with open(
+        local_path,
+        encoding="utf-8",
+        errors="replace",
+    ) as fh:
         header = fh.readline().strip()
-    print("first file :", csvs[0])
-    print("separator  :", "';' OK" if ";" in header else "NOT ';' — fix before ingesting")
-    print("header     :", header[:300])
+
+    print("First file :", first_file)
+    print(
+        "Separator  :",
+        "';' OK" if ";" in header else "NOT ';' — inspect before ingesting",
+    )
+    print("Header     :", header[:300])
+
+print(f"\nBackfill complete. New files landed: {landed}")
