@@ -1,4 +1,4 @@
-# Transformations for the silver layer
+# Silver layer transformations
 
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
@@ -6,22 +6,21 @@ from pyspark.sql import functions as F
 NATURAL_KEY = ["service_date", "train_no", "stop_point_key"]
 
 def _ts(date_col: str, time_col: str):
-    """Combine an Infrabel date column and time column into one timestamp."""
+    """Combine date and time string columns into a single timestamp."""
     return F.try_to_timestamp(F.concat_ws(" ", F.col(date_col), F.col(time_col)))
 
 _ACCENTED = "ÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ"
 _PLAIN    = "AAAEEEEIIOOUUUC"
 
 def normalize_station_name(col: str):
-    """Deterministic normalization so the same physical station always produces the same key, regardless of accenting/whitespace differences between Infrabel's D-1 daily export and the monthly reference file."""
-
+    """Normalize station names by stripping accents, uppercase formatting, and collapsing whitespace."""
     c = F.upper(F.trim(F.col(col)))
     c = F.translate(c, _ACCENTED, _PLAIN)
     c = F.regexp_replace(c, r"\s+", " ")
     return c
 
 def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFrame:
-    """Cast the all-string bronze rows into the typed silver shape."""
+   """Cast Bronze raw string records into typed Silver schema and derive metrics."""
     name_key = normalize_station_name("PTCAR_LG_NM_NL")
     return (
         raw.select(
@@ -56,11 +55,7 @@ def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFr
     )
 
 def deduplicate_stop_events(df: DataFrame) -> DataFrame:
-    """Keep the most recently ingested row per natural key.
-
-    The D-1 export is overwritten every morning, so re-running the job or
-    backfilling a gap can surface the same stop event more than once.
-    """
+"""Deduplicate records by natural key, retaining the latest ingested row."""
     w = Window.partitionBy(*NATURAL_KEY).orderBy(F.col("_ingested_at").desc())
     return (
         df.withColumn("_rn", F.row_number().over(w))
