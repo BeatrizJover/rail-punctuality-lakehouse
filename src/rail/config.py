@@ -11,6 +11,7 @@ LANDING     = f"/Volumes/{CATALOG}/bronze/landing"
 CHECKPOINTS = f"/Volumes/{CATALOG}/bronze/checkpoints"
 
 BRONZE_RAW  = f"{BRONZE}.punctuality_raw"
+BRONZE_STATION_REF = f"{BRONZE}.station_ref"
 SILVER_STOP = f"{SILVER}.stop_event"
 DQ_RESULTS  = f"{OPS}.dq_results"
 

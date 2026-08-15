@@ -1,6 +1,5 @@
 """
-Ad-hoc historical backfill utility.
-Extracts and lands targeted monthly datasets outside the primary automated pipeline.
+Ad-hoc historical backfill utility for monthly datasets.
 """
 
 import os
@@ -15,15 +14,14 @@ if REPO_ROOT not in sys.path:
 
 from src.rail.config import LANDING, ODS_BASE, DATASET_MONTHLY
 
-# Execution parameters
-# Target execution year and target months filter. Set BACKFILL_MONTHS to None for full-year processing.
+# Backfill scope configuration
 BACKFILL_YEAR = 2026
-BACKFILL_MONTHS = [7, 8]  # Type: Optional[List[int]]
+BACKFILL_MONTHS = [7]  # Set to None for full-year processing
 
 MONTHLY_DIR = f"{LANDING}/monthly"
 dbutils.fs.mkdirs(MONTHLY_DIR)
 
-# Query catalog API with server-side temporal filtering
+# Fetch monthly dataset metadata from catalog API
 records_url = f"{ODS_BASE}/{DATASET_MONTHLY}/records"
 response = requests.get(
     records_url,
@@ -39,7 +37,6 @@ payload = response.json()
 records = payload.get("results", [])
 
 print(f"{len(records)} monthly records found for {BACKFILL_YEAR}")
-
 
 # Filter payload against target execution window
 selected = []
@@ -71,11 +68,9 @@ print(
     f"{[m for m, _ in selected]}"
 )
 
-
-# Fetch and land missing raw files
+# Fetch and stage missing raw files idempotently
 landed = 0
 
-# Cache existing directory state to prevent redundant storage API calls
 existing = dbutils.fs.ls(MONTHLY_DIR)
 existing_names = {os.path.basename(f.path) for f in existing}
 
@@ -100,8 +95,7 @@ for month, url in selected:
     landed += 1
     print(f"Saved {output_path}")
 
-
-# Post-landing integrity verification
+# Verify staged file headers and structure
 csvs = sorted(
     f.path
     for f in dbutils.fs.ls(MONTHLY_DIR)
