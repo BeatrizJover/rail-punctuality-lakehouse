@@ -20,8 +20,9 @@ def normalize_station_name(col: str):
     return c
 
 def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFrame:
-   """Cast Bronze raw string records into typed Silver schema and derive metrics."""
+    """Cast Bronze raw string records into typed Silver schema and derive metrics."""
     name_key = normalize_station_name("PTCAR_LG_NM_NL")
+    
     return (
         raw.select(
             F.to_date("DATDEP").alias("service_date"),
@@ -55,7 +56,7 @@ def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFr
     )
 
 def deduplicate_stop_events(df: DataFrame) -> DataFrame:
-"""Deduplicate records by natural key, retaining the latest ingested row."""
+    """Deduplicate records by natural key, retaining the latest ingested row."""
     w = Window.partitionBy(*NATURAL_KEY).orderBy(F.col("_ingested_at").desc())
     return (
         df.withColumn("_rn", F.row_number().over(w))
