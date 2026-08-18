@@ -71,5 +71,11 @@ silver = deduplicate_stop_events(
     .whenNotMatchedInsertAll()
     .execute()
 )
+max_service_date = silver.agg(F.max("service_date")).collect()[0][0]
 
+try:
+    dbutils.jobs.taskValues.set(key="service_date", value=str(max_service_date))
+except Exception:
+    print("Not running as a job task — skipping task value publish.")
+    
 print(f"{spark.table(SILVER_STOP).count():,} rows in {SILVER_STOP}")

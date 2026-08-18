@@ -10,6 +10,15 @@ if REPO_ROOT not in sys.path:
 import datetime as dt
 from src.rail.config import BRONZE_RAW, SILVER_STOP, DQ_RESULTS
 
+service_date = dbutils.jobs.taskValues.get(
+    taskKey="silver_transform",
+    key="service_date",
+    default=None,
+    debugValue=str(dt.date.today()),
+)
+if service_date is None:
+    raise ValueError("No service_date received from silver_transform task value.")
+
 # Data quality rules evaluating failure conditions (rows_failed == 0 indicates PASS)
 SILVER_CHECKS = [
     ("not_null_keys",       "service_date IS NULL OR train_no IS NULL OR stop_point_key IS NULL"),
@@ -29,7 +38,11 @@ rows = []
 
 for table, checks in [(SILVER_STOP, SILVER_CHECKS), (BRONZE_RAW, BRONZE_CHECKS)]:
     df = spark.table(table)
-    total = df.count()
+
+    if table == SILVER_STOP:
+        df = df.filter(f"service_date = '{service_date}'")
+    total = df.count()  
+      
     for name, failing_expr in checks:
         failed = df.filter(failing_expr).count()
         rows.append(
