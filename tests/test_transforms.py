@@ -1,17 +1,7 @@
 # Unit tests for the silver-layer transformations.
 import pytest
-from pyspark.sql import SparkSession
 from src.rail.transforms import typed_stop_events, deduplicate_stop_events
 from conftest import RAW_SCHEMA
-
-@pytest.fixture(scope="session")
-def spark():
-    return (
-        SparkSession.builder.master("local[1]")
-        .appName("rail-tests")
-        .config("spark.sql.shuffle.partitions", "1")
-        .getOrCreate()
-    )
 
 def raw_row(train_no="1234", delay_arr="120", ingested="2026-08-09 06:00:00"):
     return (
