@@ -1,0 +1,77 @@
+resources:
+  jobs:
+    rail_punctuality_daily:
+      name: rail-punctuality-daily
+      email_notifications:
+        on_failure:
+          - beatrizcruzjover@gmail.com        
+      tasks:
+        - task_key: bronze_ingest
+          disable_auto_optimization: false
+          disabled: false
+          environment_key: Default
+          max_retries: 3
+          min_retry_interval_millis: 3600000
+          notification_settings:
+            alert_on_last_attempt: false
+            no_alert_for_canceled_runs: false
+            no_alert_for_skipped_runs: false
+          retry_on_timeout: false
+          run_if: ALL_SUCCESS
+          spark_python_task:
+            python_file: ../notebooks/01_bronze_ingest.py
+          timeout_seconds: 0
+          webhook_notifications: {}
+        - task_key: silver_transform
+          depends_on:
+            - task_key: bronze_ingest
+          disable_auto_optimization: false
+          disabled: false
+          environment_key: Default
+          max_retries: 1
+          min_retry_interval_millis: 300000
+          retry_on_timeout: false
+          run_if: ALL_SUCCESS
+          spark_python_task:
+            python_file: ../notebooks/02_silver_transform.py
+          timeout_seconds: 0
+          webhook_notifications: {}
+        - task_key: data_quality
+          depends_on:
+            - task_key: silver_transform
+          disabled: false
+          environment_key: Default
+          run_if: ALL_SUCCESS
+          spark_python_task:
+            python_file: ../notebooks/04_data_quality.py
+          timeout_seconds: 0
+          webhook_notifications: {}
+        - task_key: gold_star_schema
+          depends_on:
+            - task_key: silver_transform
+          disabled: false
+          max_retries: 1
+          min_retry_interval_millis: 300000
+          retry_on_timeout: false
+          run_if: ALL_SUCCESS
+          sql_task:
+            file:
+              path: ../notebooks/03_gold_star_schema.sql
+              source: WORKSPACE
+            warehouse_id: fda98af86a6bbad9
+          timeout_seconds: 0
+          webhook_notifications: {}
+      environments:
+        - environment_key: Default
+          spec:
+            environment_version: "5"
+      max_concurrent_runs: 1
+      performance_target: PERFORMANCE_OPTIMIZED
+      queue:
+        enabled: true
+      schedule:
+        pause_status: UNPAUSED
+        quartz_cron_expression: 0 30 5 * * ?
+        timezone_id: Europe/Brussels
+      timeout_seconds: 0
+      webhook_notifications: {}
