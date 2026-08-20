@@ -7,8 +7,11 @@ SILVER_CHECKS = [
     ("not_null_keys",        "service_date IS NULL OR train_no IS NULL OR stop_point_key IS NULL"),
     ("delay_in_range",       "delay_arr_s < -3600 OR delay_arr_s > 86400"),
     ("arrival_without_plan", "real_arr_ts IS NOT NULL AND planned_arr_ts IS NULL"),
-    ("unknown_station",      "stop_point_name IS NULL OR stop_point_name = ''"),
-    ("missing_ptcar_no",     "ptcar_no IS NULL"),
+    ("unknown_station",      "stop_point_name IS NULL OR stop_point_name = ''")    
+]
+
+SILVER_COVERAGE = [
+    ("ptcar_no_coverage", "ptcar_no IS NULL"),
 ]
 
 BRONZE_CHECKS = [
