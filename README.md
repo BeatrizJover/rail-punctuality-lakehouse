@@ -121,7 +121,7 @@ flowchart LR
 - **`silver_transform`** — types, deduplicates, and enriches Bronze data, then `MERGE`s into `silver.stop_event`. On completion it publishes the run's `service_date` as a Databricks Jobs task value for downstream consumption. 
 - **`gold_star_schema`** and **`data_quality`** run in parallel once Silver completes, since neither depends on the other.
 
-Failure notifications are configured at the **job level**, so every task — not just the first — is covered by alerting.
+Failure notifications are configured at the **job level**, so every task is covered by alerting.
 
 ## Data Quality
 
