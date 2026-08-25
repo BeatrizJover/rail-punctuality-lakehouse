@@ -58,6 +58,8 @@ resources:
             file:
               path: ../notebooks/03_gold_star_schema.sql
               source: WORKSPACE
+            parameters:
+              service_date: "{{tasks.silver_transform.values.service_date}}"
             warehouse_id: fda98af86a6bbad9
           timeout_seconds: 0
           webhook_notifications: {}
