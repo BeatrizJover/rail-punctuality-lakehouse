@@ -237,7 +237,8 @@ pytest tests/
 | **Bronze Layer** | Structural content validation (`raise_for_status()`) & empty response handling | ⏳ Pending | High |
 | **Silver Layer** | Blank station name filtering & bounded compute window (last N days) | ⏳ Pending | Medium |
 | **Data Quality** | Freshness validation (`max(service_date)`) & decoupled historical audit job | ⏳ Pending | Medium |
-| **Gold Layer** | Incremental `MERGE` migration for `fact_stop_event` & explicit `max(ptcar_no)` tie-breaker | ⏳ Pending | High |
+| **Gold Layer** | Incremental `MERGE` migration for `fact_stop_event` | ✅ Done | — |
+| **Gold Layer** | Deterministic `ptcar_no` tie-breaker in station reference crosswalk | ⏳ Pending | High |
 | **Maintenance** | Retention policy scheduling (`VACUUM`) & multi-year backfill support | 💡 Idea | Low |
 
 ## Author
