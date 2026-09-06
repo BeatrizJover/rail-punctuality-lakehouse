@@ -29,3 +29,6 @@ packages = ["src/rail"]
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["E402", "F821"]
