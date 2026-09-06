@@ -64,3 +64,45 @@ def deduplicate_stop_events(df: DataFrame) -> DataFrame:
         .drop("_rn")
     )
 
+# The monthly export writes dates as 01JUL2026; the daily feed writes ISO.
+MONTHLY_DATE_FORMAT = "ddMMMyyyy"
+
+MONTHLY_DATE_COLUMNS = [
+    "DATDEP",
+    "PLANNED_DATE_ARR",
+    "PLANNED_DATE_DEP",
+    "REAL_DATE_ARR",
+    "REAL_DATE_DEP",
+]
+
+
+def _try_to_date(col: str, date_format: str):
+    # SQL expression sidesteps PySpark signature drift on try_to_date's format argument.
+    return F.expr(f"try_to_date({col}, '{date_format}')")
+
+
+def normalize_monthly_dates(raw: DataFrame, date_format: str = MONTHLY_DATE_FORMAT) -> DataFrame:
+    """Rewrite monthly date literals as ISO strings so Silver sees one input contract."""
+    df = raw
+    for col in MONTHLY_DATE_COLUMNS:
+        df = df.withColumn(col, F.date_format(_try_to_date(col, date_format), "yyyy-MM-dd"))
+    return df
+
+
+def count_unparsed_dates(
+    raw: DataFrame, date_format: str = MONTHLY_DATE_FORMAT
+) -> dict[str, int]:
+    """Count non-null date literals that fail to parse.
+
+    Month abbreviations resolve against the session locale, so a historical file
+    written in another language would silently normalize to NULL. Callers abort
+    on a non-zero count rather than ingest unparseable dates.
+    """
+    exprs = [
+        F.count(
+            F.when(F.col(c).isNotNull() & _try_to_date(c, date_format).isNull(), True)
+        ).alias(c)
+        for c in MONTHLY_DATE_COLUMNS
+    ]
+    row = raw.agg(*exprs).first()
+    return {c: row[c] for c in MONTHLY_DATE_COLUMNS}

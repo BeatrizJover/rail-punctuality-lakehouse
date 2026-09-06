@@ -21,5 +21,12 @@ DATASET_MONTHLY = "stiptheid-gegevens-maandelijksebestanden"
 
 CSV_SEP = ";"
 
+# CSV_SEP is a request parameter for the D-1 API export, not a property of the
+# monthly files, which are comma-delimited.
+MONTHLY_CSV_SEP = ","
+
+MONTHLY_LANDING = f"{LANDING}/monthly"
+BRONZE_RAW_MONTHLY = f"{BRONZE}.punctuality_raw_monthly"
+
 # Infrabel definition: a train is punctual below 6 minutes (max 5 min 59 s)
 PUNCTUAL_THRESHOLD_S = 360

@@ -43,3 +43,44 @@ def test_dedup_keeps_the_latest_ingestion(spark):
 def test_rows_without_a_natural_key_are_dropped(spark):
     df = spark.createDataFrame([raw_row(train_no=None)], RAW_SCHEMA)
     assert typed_stop_events(df).count() == 0
+
+from pyspark.sql.types import StructType, StructField, StringType
+
+from src.rail.transforms import (
+    MONTHLY_DATE_COLUMNS,
+    count_unparsed_dates,
+    normalize_monthly_dates,
+)
+
+MONTHLY_DATE_SCHEMA = StructType(
+    [StructField(c, StringType(), True) for c in MONTHLY_DATE_COLUMNS]
+)
+
+
+def test_monthly_dates_normalize_to_iso(spark):
+    df = spark.createDataFrame(
+        [("01JUL2026", "01JUL2026", "01JUL2026", "01JUL2026", "01JUL2026")],
+        MONTHLY_DATE_SCHEMA,
+    )
+    row = normalize_monthly_dates(df).collect()[0]
+    assert all(row[c] == "2026-07-01" for c in MONTHLY_DATE_COLUMNS)
+
+
+def test_null_planned_dates_survive_normalization(spark):
+    """A stop with no planned arrival is valid data, not a parse failure."""
+    df = spark.createDataFrame(
+        [("01JUL2026", None, "01JUL2026", "01JUL2026", "01JUL2026")],
+        MONTHLY_DATE_SCHEMA,
+    )
+    row = normalize_monthly_dates(df).collect()[0]
+    assert row.PLANNED_DATE_ARR is None
+    assert row.DATDEP == "2026-07-01"
+    assert count_unparsed_dates(df)["PLANNED_DATE_ARR"] == 0
+
+
+def test_unparseable_month_abbreviation_is_counted(spark):
+    """Guards against a historical file using non-English month names."""
+    df = spark.createDataFrame(
+        [("01JUIL2026", None, None, None, None)], MONTHLY_DATE_SCHEMA
+    )
+    assert count_unparsed_dates(df)["DATDEP"] == 1
