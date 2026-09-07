@@ -19,10 +19,29 @@ def normalize_station_name(col: str):
     c = F.regexp_replace(c, r"\s+", " ")
     return c
 
-def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFrame:
-    """Cast Bronze raw string records into typed Silver schema and derive metrics."""
+def typed_stop_events(
+    raw: DataFrame,
+    punctual_threshold_s: int = 360,
+    source_feed: str = "daily",
+    with_native_ptcar: bool = False,
+) -> DataFrame:
+    """Cast Bronze raw string records into typed Silver schema and derive metrics.
+
+    source_feed labels the row origin so the Silver MERGE can let the richer
+    monthly feed win over the daily feed on overlapping service dates.
+
+    with_native_ptcar reads PTCAR_NO directly from the row. Only the monthly
+    export carries it; the daily feed leaves it NULL and relies on the
+    station_ref left-join downstream.
+    """
     name_key = normalize_station_name("PTCAR_LG_NM_NL")
-    
+
+    ptcar_col = (
+        F.col("PTCAR_NO").cast("int")
+        if with_native_ptcar
+        else F.lit(None).cast("int")
+    ).alias("ptcar_no")
+
     return (
         raw.select(
             F.to_date("DATDEP").alias("service_date"),
@@ -30,9 +49,10 @@ def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFr
             F.trim("RELATION").alias("relation"),
             F.trim("RELATION_DIRECTION").alias("relation_direction"),
             F.trim("TRAIN_SERV").alias("operator"),
-            F.trim("PTCAR_LG_NM_NL").alias("stop_point_name"),             
+            F.trim("PTCAR_LG_NM_NL").alias("stop_point_name"),
             name_key.alias("stop_point_name_key"),
             F.md5(name_key).alias("stop_point_key"),
+            ptcar_col,
             F.trim("LINE_NO_DEP").alias("line_no_dep"),
             F.trim("LINE_NO_ARR").alias("line_no_arr"),
             _ts("PLANNED_DATE_ARR", "PLANNED_TIME_ARR").alias("planned_arr_ts"),
@@ -48,6 +68,7 @@ def typed_stop_events(raw: DataFrame, punctual_threshold_s: int = 360) -> DataFr
             & F.col("train_no").isNotNull()
             & F.col("stop_point_key").isNotNull()
         )
+        .withColumn("source_feed", F.lit(source_feed))
         # Negative delays mean the train was early: valid data, keep them.
         .withColumn("is_punctual_arr", F.col("delay_arr_s") < punctual_threshold_s)
         .withColumn("delay_arr_min", F.round(F.col("delay_arr_s") / 60, 1))

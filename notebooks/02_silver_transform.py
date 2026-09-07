@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS {SILVER_STOP} (
     dwell_delta_s       INT,
     planned_hour        INT,
     is_punctual_arr     BOOLEAN,
-    _ingested_at        TIMESTAMP
+    _ingested_at        TIMESTAMP,
+    source_feed          STRING
 )
 USING DELTA
 CLUSTER BY (service_date, stop_point_key)
@@ -48,14 +49,21 @@ COMMENT ON TABLE {SILVER_STOP} IS
   'Grain: one train passing one measuring point per service date. Delays in seconds.'
 """)
 
-# Transform raw stop events and left-join station reference metadata
+# Transform raw stop events and enrich ptcar_no from the station reference.
 d1_typed = typed_stop_events(spark.table(BRONZE_RAW), PUNCTUAL_THRESHOLD_S)
 
-station_ref = spark.table(BRONZE_STATION_REF).select("stop_point_name_key", "ptcar_no")
-
-silver = deduplicate_stop_events(
-    d1_typed.join(station_ref, on="stop_point_name_key", how="left")
+station_ref = spark.table(BRONZE_STATION_REF).select(
+    "stop_point_name_key",
+    F.col("ptcar_no").alias("ref_ptcar_no"),
 )
+
+enriched = (
+    d1_typed.join(station_ref, on="stop_point_name_key", how="left")
+    .withColumn("ptcar_no", F.coalesce("ptcar_no", "ref_ptcar_no"))
+    .drop("ref_ptcar_no")
+)
+
+silver = deduplicate_stop_events(enriched)
 
 # Upsert processed events into Silver table using natural key
 (
@@ -67,7 +75,9 @@ silver = deduplicate_stop_events(
         "t.train_no      = s.train_no     AND "
         "t.stop_point_key = s.stop_point_key",
     )
-    .whenMatchedUpdateAll()
+    .whenMatchedUpdateAll(
+        condition="t.source_feed = 'daily' OR s.source_feed = 'monthly'"
+    )
     .whenNotMatchedInsertAll()
     .execute()
 )

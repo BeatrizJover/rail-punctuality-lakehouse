@@ -84,3 +84,20 @@ def test_unparseable_month_abbreviation_is_counted(spark):
         [("01JUIL2026", None, None, None, None)], MONTHLY_DATE_SCHEMA
     )
     assert count_unparsed_dates(df)["DATDEP"] == 1
+
+def test_typed_events_label_source_feed(spark):
+    """The origin label defaults to daily and is emitted on every row."""
+    df = spark.createDataFrame([raw_row()], RAW_SCHEMA)
+    default_row = typed_stop_events(df).collect()[0]
+    monthly_row = typed_stop_events(df, source_feed="monthly").collect()[0]
+    assert default_row.source_feed == "daily"
+    assert monthly_row.source_feed == "monthly"
+
+
+def test_native_ptcar_is_read_only_when_requested(spark):
+    """The daily feed carries no PTCAR_NO; only the monthly path reads it natively."""
+    df = spark.createDataFrame([raw_row()], RAW_SCHEMA)
+    without = typed_stop_events(df).collect()[0]
+    withp = typed_stop_events(df, with_native_ptcar=True).collect()[0]
+    assert without.ptcar_no is None
+    assert withp.ptcar_no == 5678  # PTCAR_NO position in raw_row's conftest schema
