@@ -1,11 +1,13 @@
--- Gold layer dimensional model for reporting and BI analytics
--- Dimensions and fact are merged incrementally for a single service_date, supplied by the upstream silver_transform task value.
+-- Gold layer dimensional model for reporting and BI analytics.
+-- Dimensions and fact are maintained incrementally for a single service_date,
+-- supplied by the upstream silver_transform task value. No statement in this
+-- file scans Silver in full, so daily runtime stays flat as history grows.
 
 DECLARE OR REPLACE VARIABLE run_service_date DATE;
 SET VARIABLE run_service_date = CAST(:service_date AS DATE);
 
--- dim_date
-CREATE OR REPLACE TABLE rail_punctuality.gold.dim_date AS
+-- dim_date -------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_date AS
 SELECT
     d                        AS date_key,
     year(d)                  AS year,
@@ -18,30 +20,63 @@ SELECT
     dayofweek(d) IN (1, 7)   AS is_weekend
 FROM (SELECT explode(sequence(DATE'2014-01-01', DATE'2027-12-31', INTERVAL 1 DAY)) AS d);
 
--- dim_station
-CREATE OR REPLACE TABLE rail_punctuality.gold.dim_station AS
-SELECT
-    stop_point_key         AS station_key,
-    max(stop_point_name)   AS station_name,
-    max(ptcar_no)          AS ptcar_no,
-    count(*)                AS observed_stop_events,
-    min(service_date)        AS first_seen,
-    max(service_date)         AS last_seen
-FROM rail_punctuality.silver.stop_event
-GROUP BY stop_point_key;
+-- dim_station ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_station (
+    station_key  STRING,
+    station_name STRING,
+    ptcar_no     INT,
+    first_seen   DATE,
+    last_seen    DATE
+)
+USING DELTA;
 
--- dim_relation
-CREATE OR REPLACE TABLE rail_punctuality.gold.dim_relation AS
-SELECT
-    md5(concat_ws('|', relation, relation_direction, operator)) AS relation_key,
-    relation,
-    relation_direction,
-    operator
-FROM rail_punctuality.silver.stop_event
-GROUP BY relation, relation_direction, operator;
+COMMENT ON TABLE rail_punctuality.gold.dim_station IS
+  'One row per measuring point. first_seen and last_seen are idempotent accumulators, so reruns and out-of-order historical backfills converge to the same result.';
 
--- fact_stop_event
+MERGE INTO rail_punctuality.gold.dim_station t
+USING (
+    SELECT
+        stop_point_key       AS station_key,
+        max(stop_point_name) AS station_name,
+        max(ptcar_no)        AS ptcar_no,
+        min(service_date)    AS first_seen,
+        max(service_date)    AS last_seen
+    FROM rail_punctuality.silver.stop_event
+    WHERE service_date = run_service_date
+    GROUP BY stop_point_key
+) s
+ON t.station_key = s.station_key
+WHEN MATCHED THEN UPDATE SET
+    t.station_name = coalesce(s.station_name, t.station_name),
+    t.ptcar_no     = coalesce(s.ptcar_no, t.ptcar_no),
+    t.first_seen   = least(t.first_seen, s.first_seen),
+    t.last_seen    = greatest(t.last_seen, s.last_seen)
+WHEN NOT MATCHED THEN INSERT *;
 
+-- dim_relation ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_relation (
+    relation_key       STRING,
+    relation           STRING,
+    relation_direction STRING,
+    operator           STRING
+)
+USING DELTA;
+
+-- relation_key is the MD5 of the three attributes the row carries, so a matched row can never differ from its source. 
+MERGE INTO rail_punctuality.gold.dim_relation t
+USING (
+    SELECT DISTINCT
+        md5(concat_ws('|', relation, relation_direction, operator)) AS relation_key,
+        relation,
+        relation_direction,
+        operator
+    FROM rail_punctuality.silver.stop_event
+    WHERE service_date = run_service_date
+) s
+ON t.relation_key = s.relation_key
+WHEN NOT MATCHED THEN INSERT *;
+
+-- fact_stop_event ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rail_punctuality.gold.fact_stop_event (
     date_key          DATE,
     station_key       STRING,
@@ -76,8 +111,6 @@ USING (
     FROM rail_punctuality.silver.stop_event s
     WHERE s.service_date = run_service_date
 ) s
-
-
 ON  t.date_key    = run_service_date
 AND t.date_key    = s.date_key
 AND t.station_key = s.station_key

@@ -109,32 +109,45 @@ print(f"gold fact merged for {year}")
 
 # COMMAND ----------
 
-# Rebuild Gold dimensions from Silver, one year at a time. This is a full rebuild, not incremental.
-spark.sql("""
-CREATE OR REPLACE TABLE rail_punctuality.gold.dim_station AS
-SELECT
-    stop_point_key       AS station_key,
-    max(stop_point_name) AS station_name,
-    max(ptcar_no)        AS ptcar_no,
-    count(*)             AS observed_stop_events,
-    min(service_date)    AS first_seen,
-    max(service_date)    AS last_seen
-FROM rail_punctuality.silver.stop_event
-GROUP BY stop_point_key
+# Maintain Gold dimensions incrementally over the backfilled year range.
+spark.sql(f"""
+MERGE INTO rail_punctuality.gold.dim_station t
+USING (
+    SELECT
+        stop_point_key       AS station_key,
+        max(stop_point_name) AS station_name,
+        max(ptcar_no)        AS ptcar_no,
+        min(service_date)    AS first_seen,
+        max(service_date)    AS last_seen
+    FROM rail_punctuality.silver.stop_event
+    WHERE service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
+    GROUP BY stop_point_key
+) s
+ON t.station_key = s.station_key
+WHEN MATCHED THEN UPDATE SET
+    t.station_name = coalesce(s.station_name, t.station_name),
+    t.ptcar_no     = coalesce(s.ptcar_no, t.ptcar_no),
+    t.first_seen   = least(t.first_seen, s.first_seen),
+    t.last_seen    = greatest(t.last_seen, s.last_seen)
+WHEN NOT MATCHED THEN INSERT *
 """)
 
-spark.sql("""
-CREATE OR REPLACE TABLE rail_punctuality.gold.dim_relation AS
-SELECT
-    md5(concat_ws('|', relation, relation_direction, operator)) AS relation_key,
-    relation,
-    relation_direction,
-    operator
-FROM rail_punctuality.silver.stop_event
-GROUP BY relation, relation_direction, operator
+spark.sql(f"""
+MERGE INTO rail_punctuality.gold.dim_relation t
+USING (
+    SELECT DISTINCT
+        md5(concat_ws('|', relation, relation_direction, operator)) AS relation_key,
+        relation,
+        relation_direction,
+        operator
+    FROM rail_punctuality.silver.stop_event
+    WHERE service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
+) s
+ON t.relation_key = s.relation_key
+WHEN NOT MATCHED THEN INSERT *
 """)
-
-print("dimensions rebuilt")
+ 
+print(f"dimensions merged for {year}")
 
 # COMMAND ----------
 
