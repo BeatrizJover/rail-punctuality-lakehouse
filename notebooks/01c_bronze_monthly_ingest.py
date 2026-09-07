@@ -18,13 +18,14 @@ from pyspark.sql import functions as F
 from src.rail.config import BRONZE_RAW_MONTHLY, MONTHLY_CSV_SEP, MONTHLY_LANDING
 from src.rail.transforms import count_unparsed_dates, normalize_monthly_dates
 
-# Column order is fixed here so writes match the table schema by position.
+# Documented Infrabel monthly fields consumed by the pipeline.
+# See README §Schema governance for the process of adding a new column.
 SOURCE_COLUMNS = [
-    "DATDEP", "CIRC_TYP", "TRAIN_NO", "RELATION", "TRAIN_SERV",
-    "OP1_COD", "THOP1_COD", "PTCAR_NO", "PTCAR_LG_NM_NL", "LINE_NO_DEP",
+    "DATDEP", "TRAIN_NO", "RELATION", "TRAIN_SERV",
+    "PTCAR_NO", "PTCAR_LG_NM_NL", "LINE_NO_DEP", "LINE_NO_ARR",
     "REAL_DATE_ARR", "REAL_TIME_ARR", "REAL_DATE_DEP", "REAL_TIME_DEP",
     "PLANNED_DATE_ARR", "PLANNED_TIME_ARR", "PLANNED_TIME_DEP", "PLANNED_DATE_DEP",
-    "DELAY_ARR", "DELAY_DEP", "RELATION_DIRECTION", "LINE_NO_ARR",
+    "DELAY_ARR", "DELAY_DEP", "RELATION_DIRECTION",
 ]
 
 # COMMAND ----------
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS {BRONZE_RAW_MONTHLY} (
 )
 USING DELTA
 PARTITIONED BY (source_year_month)
+TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
 """)
 
 spark.sql(f"""
@@ -88,13 +90,16 @@ for ym in selected:
         .option("sep", MONTHLY_CSV_SEP)
         .csv(path)
     )
-
-    missing = set(SOURCE_COLUMNS) - set(raw.columns)
+    # Fail loud on missing required columns; log loud on unexpected new ones.
+    present = set(raw.columns)
+    missing = set(SOURCE_COLUMNS) - present
     if missing:
-        raise ValueError(f"{ym}: missing expected columns {sorted(missing)}")
+        raise ValueError(f"{ym}: missing required columns {sorted(missing)}")
+    unexpected = present - set(SOURCE_COLUMNS)
+    if unexpected:
+        print(f"{ym}: NOTE — unexpected columns in source, ignored: {sorted(unexpected)}")
 
-    # Abort rather than write NULL dates: a locale mismatch would otherwise be
-    # invisible until the whole month vanished in the Silver null filter.
+    # Abort rather than write NULL dates
     unparsed = count_unparsed_dates(raw)
     if any(unparsed.values()):
         raise ValueError(f"{ym}: unparseable date literals {unparsed}")
