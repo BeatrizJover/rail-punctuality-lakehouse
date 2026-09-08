@@ -1,7 +1,10 @@
 # Unit tests for the silver-layer transformations.
-import pytest
+
 from src.rail.transforms import typed_stop_events, deduplicate_stop_events
 from conftest import RAW_SCHEMA
+from pyspark.sql.types import StructType, StructField, StringType
+
+from src.rail.transforms import (MONTHLY_DATE_COLUMNS, count_unparsed_dates, normalize_monthly_dates,)
 
 def raw_row(train_no="1234", delay_arr="120", ingested="2026-08-09 06:00:00"):
     return (
@@ -44,13 +47,7 @@ def test_rows_without_a_natural_key_are_dropped(spark):
     df = spark.createDataFrame([raw_row(train_no=None)], RAW_SCHEMA)
     assert typed_stop_events(df).count() == 0
 
-from pyspark.sql.types import StructType, StructField, StringType
 
-from src.rail.transforms import (
-    MONTHLY_DATE_COLUMNS,
-    count_unparsed_dates,
-    normalize_monthly_dates,
-)
 
 MONTHLY_DATE_SCHEMA = StructType(
     [StructField(c, StringType(), True) for c in MONTHLY_DATE_COLUMNS]
