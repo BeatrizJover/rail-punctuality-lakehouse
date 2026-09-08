@@ -3,8 +3,7 @@
 Publishes the Gold layer to Azure Blob as date-partitioned Parquet — the stable,
 credential-free interface the downstream RAG project consumes.
 
-The fact is written partitioned by `date_key`; the three dimensions are written
-whole. This layout is the published contract: the RAG loader mirrors it verbatim,
+This layout is the published contract: the RAG loader mirrors it verbatim,
 so any change here is a contract change and must be reflected in its data_contracts.
 
     {container}/{EXPORT_PREFIX}/fact_stop_event/date_key=YYYY-MM-DD/*.parquet
