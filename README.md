@@ -99,11 +99,16 @@ It is not available on the incremental path. `PTCAR_NO` is carried only by the m
 | Table | Grain / Key | Notes |
 |---|---|---|
 | `gold.dim_date` | `date_key` | Generated calendar, 2014–2027, with weekend flag |
-| `gold.dim_station` | `station_key` | Station name, nullable `ptcar_no`, first/last seen, observed volume |
+| `gold.dim_station` | `station_key` | Station name, nullable `ptcar_no`, and `first_seen`/`last_seen` maintained as idempotent accumulators |
 | `gold.dim_relation` | `relation_key` | MD5 of `relation \| direction \| operator` |
 | `gold.fact_stop_event` | `date_key`, `station_key`, `relation_key` | Clustered by `(date_key, station_key)` |
 
 `fact_stop_event` carries fully additive measures — `stop_events` and `punctual_arrivals` — so punctuality rate is a clean `SUM/SUM` ratio at any grain in the BI layer, rather than an average of averages.
+
+**Dimensions maintained incrementally.** All three dimensions are updated by `MERGE` scoped to the current run's `service_date`, never rebuilt from a full Silver scan. Two modeling decisions make this safe:
+
+- **No fact-derived measures in a dimension.** `dim_station` deliberately carries no stored stop-event count. A `count(*)` of fact rows cannot be maintained incrementally — adding the day's batch double-counts on any repair run, and computing it exactly requires the full Silver scan the incremental design removes. It belongs in the BI layer as `SUM(stop_events)` over `fact_stop_event`, which respects the report's date filters, where a static column would not.
+- **Idempotent accumulators over additive ones.** `first_seen` and `last_seen` are merged with `least()` / `greatest()` rather than recomputed. This is idempotent under reruns and self-correcting when a historical year is backfilled *after* a more recent one. `station_name` and `ptcar_no` use `coalesce(source, target)`, so a NULL `PTCAR_NO` from the daily feed never erases a value already known from the monthly feed — aligning the dimension with the monthly-wins rule used in Silver.
 
 ## Pipeline Orchestration
 
@@ -119,7 +124,7 @@ flowchart LR
 
 - **`bronze_ingest`** — fetches the D-1 export over HTTP, stages it to a Unity Catalog Volume, and incrementally ingests it into `bronze.punctuality_raw` with Auto Loader (`schemaEvolutionMode = rescue`, types left as strings by design). Configured with retries at a **1-hour interval**: long enough to ride out a transient upstream outage without burning through attempts immediately, short enough to still leave room for manual intervention within the ~23-hour window before the next scheduled run. 
 - **`silver_transform`** — types, deduplicates, and enriches Bronze data, then `MERGE`s into `silver.stop_event`. On completion it publishes the run's `service_date` as a Databricks Jobs task value for downstream consumption. 
-- **`gold_star_schema`** and **`data_quality`** run in parallel once Silver completes, since neither depends on the other.
+- **`gold_star_schema`** and **`data_quality`** run in parallel once Silver completes, since neither depends on the other. Gold is maintained incrementally: `dim_date` is a static generated calendar created once, the dimensions are upserted by `MERGE` scoped to the run's `service_date`, and the fact is `MERGE`d for the same date with the target pruned on `date_key`. No statement in the task scans Silver in full.
 
 Failure notifications are configured at the **job level**, so every task is covered by alerting.
 
@@ -161,10 +166,12 @@ rail-punctuality-lakehouse/
 │   ├── 00_setup.sql                      # Catalog, schemas, volumes
 │   ├── 01_bronze_ingest.py               # D-1 fetch + Auto Loader ingest
 │   ├── 01b_bronze_stop_point_reference.py# Monthly-derived station reference
+│   ├── 01c_bronze_monthly_ingest.py      # Monthly export ingest (one year per run)
 │   ├── 02_silver_transform.py            # Type, dedup, enrich, MERGE
-│   ├── 03_gold_star_schema.sql           # Dimensional model
+│   ├── 03_gold_star_schema.sql           # Incremental dimensional model
 │   ├── 04_data_quality.py                # DQ orchestration
-│   └── 90_backfill_history.py            # Historical backfill utility
+│   ├── 90_backfill_history.py            # Historical file download utility
+│   └── 91_backfill_silver_gold.py        # Silver + Gold backfill (one year per run)
 ├── src/
 │   └── rail/                             # Testable, importable pipeline logic
 │       ├── __init__.py
@@ -237,7 +244,7 @@ pytest tests/
 | **Bronze Layer** | Structural content validation (`raise_for_status()`) & empty response handling | ⏳ Pending | High |
 | **Silver Layer** | Blank station name filtering & bounded compute window (last N days) | ⏳ Pending | Medium |
 | **Data Quality** | Freshness validation (`max(service_date)`) & decoupled historical audit job | ⏳ Pending | Medium |
-| **Gold Layer** | Incremental `MERGE` migration for `fact_stop_event` | ✅ Done | — |
+| **Gold Layer** | Incremental `MERGE` for `fact_stop_event` and all dimensions — no full Silver scan | ✅ Done | — |
 | **Gold Layer** | Deterministic `ptcar_no` tie-breaker in station reference crosswalk | ⏳ Pending | High |
 | **Maintenance** | Retention policy scheduling (`VACUUM`) & multi-year backfill support | 💡 Idea | Low |
 
