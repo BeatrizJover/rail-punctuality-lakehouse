@@ -3,7 +3,8 @@
 Publishes the Gold layer to Azure Blob as date-partitioned Parquet — the stable,
 credential-free interface the downstream RAG project consumes.
 
-This layout is the published contract: the RAG loader mirrors it verbatim,
+The fact is written partitioned by `date_key`; the three dimensions are written
+whole. This layout is the published contract: the RAG loader mirrors it verbatim,
 so any change here is a contract change and must be reflected in its data_contracts.
 
     {container}/{EXPORT_PREFIX}/fact_stop_event/date_key=YYYY-MM-DD/*.parquet
@@ -39,13 +40,16 @@ import re
 
 from pyspark.sql import functions as F
 
-from src.rail.config import (
-    GOLD_FACT,
-    GOLD_DIM_DATE,
-    GOLD_DIM_STATION,
-    GOLD_DIM_RELATION,
-    EXPORT_PREFIX,
-)
+from src.rail.config import GOLD
+
+# Gold table identifiers, derived from the catalog schema declared in config.
+GOLD_FACT = f"{GOLD}.fact_stop_event"
+GOLD_DIM_DATE = f"{GOLD}.dim_date"
+GOLD_DIM_STATION = f"{GOLD}.dim_station"
+GOLD_DIM_RELATION = f"{GOLD}.dim_relation"
+
+# Published export layout — the RAG loader mirrors this structure from Blob.
+EXPORT_PREFIX = "gold"
 
 # COMMAND ----------
 
@@ -99,10 +103,19 @@ base = f"abfss://{container}@{endpoint}/{EXPORT_PREFIX}"
 
 # COMMAND ----------
 
-# Fact: filter to the published window, one file per date partition, dynamic overwrite
-# so re-running a range replaces only its partitions and never the whole dataset.
+# Fail fast on an empty window: an export that silently publishes nothing would
+# hand the consumer a valid-looking but empty contract.
 fact = spark.table(GOLD_FACT).filter(F.col("date_key").between(range_start, range_end))
 
+if fact.isEmpty():
+    raise ValueError(
+        f"No rows in {GOLD_FACT} between {range_start} and {range_end} — nothing to publish."
+    )
+
+# COMMAND ----------
+
+# Fact: one file per date partition, dynamic overwrite so re-running a range
+# replaces only its partitions and never the whole dataset.
 (
     fact.repartition("date_key")
     .write.mode("overwrite")
@@ -152,8 +165,8 @@ manifest = {
     "exported_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "requested_range": {"start": range_start, "end": range_end},
     "fact_stop_event": {
-        "min_date_key": str(bounds["min_date"]) if bounds["min_date"] else None,
-        "max_date_key": str(bounds["max_date"]) if bounds["max_date"] else None,
+        "min_date_key": str(bounds["min_date"]),
+        "max_date_key": str(bounds["max_date"]),
         "total_rows": bounds["total_rows"],
         "rows_per_year": per_year,
     },
@@ -176,3 +189,12 @@ dbutils.fs.put(
     overwrite=True,
 )
 print(json.dumps(manifest, indent=2))
+
+# COMMAND ----------
+
+# Read back the published artifacts and print their schemas. This is the contract
+# surface the RAG's data_contracts must match — in particular the inferred type of
+# the `date_key` partition column, which differs from its type in the Delta table.
+for folder in ["fact_stop_event", "dim_date", "dim_station", "dim_relation"]:
+    print(f"--- {folder} ---")
+    spark.read.parquet(f"{base}/{folder}").printSchema()
