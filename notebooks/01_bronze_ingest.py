@@ -8,6 +8,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import datetime as dt
+from zoneinfo import ZoneInfo
+
 import requests
 from pyspark.sql import functions as F
 
@@ -15,10 +17,10 @@ from src.rail.config import (
     LANDING, CHECKPOINTS, BRONZE_RAW,
     ODS_BASE, DATASET_DAILY, CSV_SEP,
 )
+from src.rail.ingest import validate_d1_export
 
 # Fetch daily export (D-1) and stage to landing volume
-run_date = dt.date.today() - dt.timedelta(days=1)
-target = f"{LANDING}/d1/{run_date:%Y-%m-%d}.csv"
+service_date = dt.datetime.now(ZoneInfo("Europe/Brussels")).date() - dt.timedelta(days=1)
 
 dbutils.fs.mkdirs(f"{LANDING}/d1")
 
@@ -29,10 +31,16 @@ resp = requests.get(
 )
 resp.raise_for_status()
 
+# Raise on a stale export so the task retry policy waits for the upstream refresh
+validated_date = validate_d1_export(resp.content, CSV_SEP, service_date)
+
+fetched_at = dt.datetime.now(dt.timezone.utc)
+target = f"{LANDING}/d1/{service_date:%Y-%m-%d}_{fetched_at:%Y%m%dT%H%M%SZ}.csv"
+
 with open(target, "wb") as fh:
     fh.write(resp.content)
 
-print(f"landed {len(resp.content):,} bytes -> {target}")
+print(f"validated service date {validated_date} -> landed {target}")
 
 # Incrementally ingest landed CSVs into Bronze Delta table via Auto Loader
 stream = (
