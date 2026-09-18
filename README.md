@@ -213,6 +213,8 @@ flowchart LR
 
 ![Job run history](docs/img/job_runs.png)
 
+*Duration spikes in early September (up to ~22 min against a ~3 min baseline) occurred when the ad-hoc monthly backfill (`01c` / `91`) ran immediately before the daily job; they stopped once the two were no longer run back to back. The "Manually" launches are validation runs after deploying changes, not scheduled executions — every run in this window succeeded. Scheduled runs still show 05:30 because the screenshot predates the move to 07:00 (see Upstream refresh timing below).*
+
 - **`bronze_ingest`** — fetches the D-1 export over HTTP, validates that it actually covers the expected service date, stages it to a Unity Catalog Volume, and incrementally ingests it into `bronze.punctuality_raw` with Auto Loader. Retries run at a **1-hour interval**: long enough for a late upstream publication to land without burning through attempts immediately, short enough to leave room for manual intervention within the ~23-hour window before the next scheduled run.
 - **`silver_transform`** — types, deduplicates, and enriches Bronze data, then `MERGE`s into `silver.stop_event` under the monthly-wins rule. On completion it publishes the run's `service_date` as a Databricks Jobs task value.
 - **`gold_star_schema`** and **`data_quality`** run in parallel once Silver completes, since neither depends on the other. Both consume the `service_date` task value — Gold receives it as a SQL task parameter and binds it to a session variable. `dim_date` is a static calendar created once; the dimensions are upserted by `MERGE` scoped to the run's `service_date`, and the fact is `MERGE`d for the same date with the target pruned on `date_key`. No statement in the task scans Silver in full.
@@ -243,6 +245,8 @@ The monthly path is deliberately not on the schedule: the files are ~2M rows eac
 | `92_export_gold_to_blob.py` | Gold | Parquet export on Azure Blob | `start_year`, `end_year`, storage and secret widgets | `91` or the daily job |
 
 Files prefixed `00_migration_` are run once, manually, before deploying the change they support. They are not part of the scheduled job.
+
+Do not run the backfill notebooks immediately before the scheduled job: they are not part of the job definition, so `max_concurrent_runs: 1` does not serialize them against it, and an overlapping run extends the daily job's runtime well past its normal ~3 minutes.
 
 ## Data Quality
 
