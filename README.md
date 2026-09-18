@@ -4,6 +4,7 @@
 ![PySpark](https://img.shields.io/badge/PySpark-E25A1C?style=flat&logo=apachespark&logoColor=white)
 ![Delta Lake](https://img.shields.io/badge/Delta%20Lake-00ADD8?style=flat&logo=delta&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-blue?style=flat&logo=python&logoColor=white)
+[![CI](https://github.com/BeatrizJover/rail-punctuality-lakehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/BeatrizJover/rail-punctuality-lakehouse/actions/workflows/ci.yml)
 
 
 A medallion-architecture lakehouse on Databricks that ingests, cleans, and models Belgian rail punctuality data (Infrabel / SNCB open data) into a star schema for analysis in Power BI.
