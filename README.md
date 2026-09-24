@@ -145,6 +145,8 @@ It is not available on the incremental path. `PTCAR_NO` is carried only by the m
 
 **Surrogate key for the Silver grain.** Station identity is therefore derived from a deterministic surrogate: `stop_point_key`, an MD5 hash of the normalized, accent-stripped station name. It is the `MERGE` and clustering key for `silver.stop_event`, and it is reproducible from the daily feed alone. `PTCAR_NO` is *demoted from a join dependency to a nullable enrichment attribute*: read natively when the row comes from the monthly export (`with_native_ptcar=True`), and otherwise left-joined in from the monthly-derived `bronze.station_ref` crosswalk on the same normalized name, with `coalesce(native, crosswalk)` deciding.
 
+**Operational points reference.** A third, independent source — `operationele-punten-van-het-netwerk` ("operational points of the network"), CC0, published on the Infrabel OpenDataSoft portal — is ingested ad hoc by `01d_bronze_operational_point.py` into `bronze.operational_point`. It is republished **quarterly** as a full snapshot, not appended, and carries `ptcarid` (the same identifier as `PTCAR_NO`, published as text), commercial and BVT station name variants, and a classification in three languages. It is landed as-is, with no join into Silver yet; it unblocks the station classification work tracked on the [Roadmap](#roadmap). **Coordinates are schematic**: Infrabel states the data targets a maximum scale of 1/25,000, with a single position sometimes representing up to ~3 km of platforms — it supports a network map, not distance-based analysis.
+
 ## Schema Governance
 
 The two feeds are governed differently, because their failure modes differ.
@@ -321,6 +323,7 @@ rail-punctuality-lakehouse/
 │   ├── 01_bronze_ingest.py                    # D-1 fetch + Auto Loader ingest        [scheduled]
 │   ├── 01b_bronze_stop_point_reference.py     # Monthly-derived station crosswalk     [ad-hoc]
 │   ├── 01c_bronze_monthly_ingest.py           # Monthly export ingest, one year/run   [ad-hoc]
+│   ├── 01d_bronze_operational_point.py        # Operational points reference          [ad-hoc]
 │   ├── 02_silver_transform.py                 # Type, dedup, enrich, MERGE            [scheduled]
 │   ├── 03_gold_star_schema.sql                # Incremental dimensional model         [scheduled]
 │   ├── 04_data_quality.py                     # DQ orchestration                      [scheduled]
@@ -422,6 +425,7 @@ Both commands run on every push to `main` and on every pull request via `.github
 | :--- | :--- | :---: | :---: |
 | **Bronze Layer** | D-1 fetch guard — reject stale or empty exports before landing, and name landed files by fetch timestamp | ✅ Done | — |
 | **Bronze Layer** | Station crosswalk (`01b`): build from `bronze.punctuality_raw_monthly` across all loaded months, with a deterministic `ptcar_no` tie-breaker — it currently reads a single configured month and keeps `first()` | ⏳ Pending | High |
+| **Bronze Layer** | Station classification: profile `bronze.operational_point` (landed by `01d`) and join it into `dim_station` on `ptcarid` / `PTCAR_NO`, choosing between the BVT and commercial name families and a `class_en` mapping — depends on `01b`'s crosswalk fix above for a clean join key | ⏳ Pending | Medium |
 | **Silver Layer** | Bounded Bronze read window — each daily run re-reads the full daily Bronze table and rewrites every daily Silver row (≈2.06M source rows on 2026-09-17, growing ~75k per day); plus blank station name filtering | ⏳ Pending | High |
 | **Data Quality** | Empty-partition rule — row-level checks read as PASS on a day with zero rows | ⏳ Pending | High |
 | **Data Quality** | Alert on failed assertions — outcomes are recorded, not enforced | ⏳ Pending | Medium |

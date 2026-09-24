@@ -28,5 +28,9 @@ MONTHLY_CSV_SEP = ","
 MONTHLY_LANDING = f"{LANDING}/monthly"
 BRONZE_RAW_MONTHLY = f"{BRONZE}.punctuality_raw_monthly"
 
+DATASET_OPERATIONAL_POINT = "operationele-punten-van-het-netwerk"
+OPERATIONAL_POINT_LANDING = f"{LANDING}/reference"
+BRONZE_OPERATIONAL_POINT = f"{BRONZE}.operational_point"
+
 # Infrabel definition: a train is punctual below 6 minutes (max 5 min 59 s)
 PUNCTUAL_THRESHOLD_S = 360

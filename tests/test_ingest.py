@@ -2,9 +2,15 @@ import datetime as dt
 
 import pytest
 
-from src.rail.ingest import StaleExportError, validate_d1_export
+from src.rail.ingest import (
+    REQUIRED_OPERATIONAL_POINT_COLUMNS,
+    StaleExportError,
+    validate_d1_export,
+    validate_operational_point_export,
+)
 
 HEADER = "DATDEP;TRAIN_NO"
+OP_HEADER = ";".join(REQUIRED_OPERATIONAL_POINT_COLUMNS + ["classification", "class_fr"])
 
 
 def payload(rows, bom=False):
@@ -39,3 +45,26 @@ def test_missing_date_column_raises_value_error():
     content = ("TRAIN_NO\n1234").encode("utf-8")
     with pytest.raises(ValueError):
         validate_d1_export(content, ";", expected)
+
+
+def op_payload(rows):
+    text = "\n".join([OP_HEADER, *rows])
+    return text.encode("utf-8")
+
+
+def test_operational_point_export_returns_row_count():
+    row = "7;AALST-OOST;AALST-OOST;Aalst-Oost;FLSO;Station;50.93, 4.05;Station;Gare"
+    content = op_payload([row, row])
+    assert validate_operational_point_export(content, ";") == 2
+
+
+def test_operational_point_empty_export_raises_value_error():
+    content = op_payload([])
+    with pytest.raises(ValueError):
+        validate_operational_point_export(content, ";")
+
+
+def test_operational_point_missing_required_column_raises_value_error():
+    content = ("ptcarid;longnamedutch\n7;AALST-OOST").encode("utf-8")
+    with pytest.raises(ValueError):
+        validate_operational_point_export(content, ";")
