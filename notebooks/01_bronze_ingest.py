@@ -15,7 +15,7 @@ from pyspark.sql import functions as F
 
 from src.rail.config import (
     LANDING, CHECKPOINTS, BRONZE_RAW,
-    ODS_BASE, DATASET_DAILY, CSV_SEP,
+    ODS_BASE, DATASET_DAILY, CSV_SEP, ODS_EXPORT_PARAMS,
 )
 from src.rail.ingest import validate_d1_export
 
@@ -26,7 +26,7 @@ dbutils.fs.mkdirs(f"{LANDING}/d1")
 
 resp = requests.get(
     f"{ODS_BASE}/{DATASET_DAILY}/exports/csv",
-    params={"delimiter": CSV_SEP},
+    params=ODS_EXPORT_PARAMS,
     timeout=600,
 )
 resp.raise_for_status()
@@ -49,6 +49,8 @@ stream = (
     .option("cloudFiles.schemaLocation", f"{CHECKPOINTS}/bronze_schema")
     .option("cloudFiles.inferColumnTypes", "false")
     .option("cloudFiles.schemaEvolutionMode", "rescue")
+    # Upstream header casing changed but the tracked schema keeps the original; without this a case-only difference is rescued instead of read
+    .option("readerCaseSensitive", "false")
     .option("header", "true")
     .option("sep", CSV_SEP)
     .load(f"{LANDING}/d1")

@@ -25,6 +25,10 @@ CSV_SEP = ";"
 # monthly files, which are comma-delimited.
 MONTHLY_CSV_SEP = ","
 
+# The portal's own download URLs request labels, which are localized; pinning
+# use_labels keeps the API export on field names whatever the portal default.
+ODS_EXPORT_PARAMS = {"delimiter": CSV_SEP, "use_labels": "false"}
+
 MONTHLY_LANDING = f"{LANDING}/monthly"
 BRONZE_RAW_MONTHLY = f"{BRONZE}.punctuality_raw_monthly"
 

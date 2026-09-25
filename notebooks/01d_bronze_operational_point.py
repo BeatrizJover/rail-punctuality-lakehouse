@@ -26,7 +26,7 @@ from pyspark.sql import functions as F
 
 from src.rail.config import (
     BRONZE_OPERATIONAL_POINT, CSV_SEP, DATASET_OPERATIONAL_POINT,
-    ODS_BASE, OPERATIONAL_POINT_LANDING,
+    ODS_BASE, ODS_EXPORT_PARAMS, OPERATIONAL_POINT_LANDING,
 )
 from src.rail.ingest import validate_operational_point_export
 
@@ -39,7 +39,7 @@ dbutils.fs.mkdirs(OPERATIONAL_POINT_LANDING)
 
 resp = requests.get(
     f"{ODS_BASE}/{DATASET_OPERATIONAL_POINT}/exports/csv",
-    params={"delimiter": CSV_SEP},
+    params=ODS_EXPORT_PARAMS,
     timeout=600,
 )
 resp.raise_for_status()
