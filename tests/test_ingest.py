@@ -3,13 +3,14 @@ import datetime as dt
 import pytest
 
 from src.rail.ingest import (
+    REQUIRED_D1_COLUMNS,
     REQUIRED_OPERATIONAL_POINT_COLUMNS,
     StaleExportError,
     validate_d1_export,
     validate_operational_point_export,
 )
 
-HEADER = "DATDEP;TRAIN_NO"
+HEADER = ";".join(REQUIRED_D1_COLUMNS)
 OP_HEADER = ";".join(REQUIRED_OPERATIONAL_POINT_COLUMNS + ["classification", "class_fr"])
 
 
@@ -44,6 +45,20 @@ def test_missing_date_column_raises_value_error():
     expected = dt.date(2026, 9, 18)
     content = ("TRAIN_NO\n1234").encode("utf-8")
     with pytest.raises(ValueError):
+        validate_d1_export(content, ";", expected)
+
+
+def test_lowercase_header_returns_expected_date():
+    expected = dt.date(2026, 9, 18)
+    text = "\n".join([HEADER.lower(), f"{expected:%Y-%m-%d};1234"])
+    assert validate_d1_export(text.encode("utf-8"), ";", expected) == expected
+
+
+def test_missing_required_column_raises_value_error_naming_it():
+    expected = dt.date(2026, 9, 18)
+    header = ";".join(c for c in REQUIRED_D1_COLUMNS if c != "DELAY_ARR")
+    content = "\n".join([header, f"{expected:%Y-%m-%d};1234"]).encode("utf-8")
+    with pytest.raises(ValueError, match="DELAY_ARR"):
         validate_d1_export(content, ";", expected)
 
 

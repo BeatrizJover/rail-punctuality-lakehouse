@@ -6,6 +6,18 @@ import io
 
 DATE_COLUMN = "DATDEP"
 
+# Every D-1 field the Silver transform consumes. PTCAR_NO is absent: the D-1
+# feed does not carry it.
+REQUIRED_D1_COLUMNS = [
+    "DATDEP", "TRAIN_NO", "RELATION", "RELATION_DIRECTION", "TRAIN_SERV",
+    "PTCAR_LG_NM_NL", "LINE_NO_DEP", "LINE_NO_ARR",
+    "PLANNED_DATE_ARR", "PLANNED_TIME_ARR",
+    "PLANNED_DATE_DEP", "PLANNED_TIME_DEP",
+    "REAL_DATE_ARR", "REAL_TIME_ARR",
+    "REAL_DATE_DEP", "REAL_TIME_DEP",
+    "DELAY_ARR", "DELAY_DEP",
+]
+
 # Columns the Silver crosswalk and downstream classification work depend on.
 REQUIRED_OPERATIONAL_POINT_COLUMNS = [
     "ptcarid",
@@ -25,12 +37,19 @@ class StaleExportError(RuntimeError):
 def export_service_dates(content: bytes, sep: str) -> set[dt.date]:
     """Return the distinct service dates present in a D-1 CSV payload."""
     reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")), delimiter=sep)
-    if not reader.fieldnames or DATE_COLUMN not in reader.fieldnames:
-        raise ValueError(f"D-1 export has no {DATE_COLUMN} column: {reader.fieldnames}")
+    # Upstream header casing is not stable; row keys follow the file, so
+    # resolve each canonical name to the key as received.
+    header = {name.upper(): name for name in reader.fieldnames or []}
+    missing = [col for col in REQUIRED_D1_COLUMNS if col not in header]
+    if missing:
+        raise ValueError(
+            f"D-1 export missing required columns {missing}: {reader.fieldnames}"
+        )
+    date_key = header[DATE_COLUMN]
     return {
-        dt.date.fromisoformat(row[DATE_COLUMN][:10])
+        dt.date.fromisoformat(row[date_key][:10])
         for row in reader
-        if row.get(DATE_COLUMN)
+        if row.get(date_key)
     }
 
 
