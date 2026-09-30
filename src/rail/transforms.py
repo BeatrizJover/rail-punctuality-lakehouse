@@ -3,6 +3,8 @@
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
+from src.rail.config import PASSENGER_CLASSES, SERVICE_INFRA_TOKENS
+
 NATURAL_KEY = ["service_date", "train_no", "stop_point_key"]
 
 def _ts(date_col: str, time_col: str):
@@ -75,6 +77,100 @@ def typed_stop_events(
         .withColumn("dwell_delta_s", F.col("delay_dep_s") - F.col("delay_arr_s"))
         .withColumn("planned_hour", F.hour("planned_arr_ts"))
     )
+
+def enrich_stations(stations: DataFrame, operational_points: DataFrame) -> DataFrame:
+    """Classify dim_station rows and attach coordinates from Infrabel's
+    operational-point reference (bronze.operational_point).
+
+    Resolution order: exact PTCAR ID match (`ptcar_no = try_cast(ptcarid AS
+    INT)`), then a normalized-name fallback for rows the ID misses. A
+    reference name that maps to more than one PTCAR ID is ambiguous and
+    excluded from the fallback -- such rows are left unmatched rather than
+    guessed at. station_type, latitude and longitude are NULL when unmatched;
+    is_passenger is never NULL, falling back to a naming-token heuristic for
+    known non-passenger infrastructure.
+
+    Expects `stations` with station_key, station_name, ptcar_no, and
+    `operational_points` with ptcarid, longnamedutch, class_en, geo_point_2d.
+    Returns station_key, station_type, is_passenger, latitude, longitude.
+    """
+    ops = operational_points.select(
+        F.expr("try_cast(ptcarid AS INT)").alias("op_ptcar_no"),
+        F.col("class_en").alias("op_station_type"),
+        F.col("longnamedutch").alias("op_longnamedutch"),
+        F.col("geo_point_2d").alias("op_geo_point_2d"),
+    )
+
+    base = stations.select("station_key", "station_name", "ptcar_no")
+    id_joined = base.join(ops, F.col("ptcar_no") == F.col("op_ptcar_no"), "left")
+
+    matched = id_joined.filter(F.col("op_ptcar_no").isNotNull())
+    unmatched_by_id = id_joined.filter(F.col("op_ptcar_no").isNull()).select(*base.columns)
+
+    # A reference name usable for the fallback must resolve to exactly one
+    # PTCAR ID; ambiguous names are dropped and logged rather than guessed at.
+    ops_by_name = ops.withColumn("op_name_key", normalize_station_name("op_longnamedutch"))
+    name_fanout = ops_by_name.groupBy("op_name_key").agg(
+        F.countDistinct("op_ptcar_no").alias("fanout")
+    )
+    ambiguous_names = name_fanout.filter(F.col("fanout") > 1).count()
+    if ambiguous_names:
+        print(
+            f"enrich_stations: {ambiguous_names} reference name(s) map to more "
+            "than one PTCAR ID; excluded from the name fallback"
+        )
+    ops_unique_by_name = ops_by_name.join(
+        name_fanout.filter(F.col("fanout") == 1).select("op_name_key"), "op_name_key"
+    )
+
+    name_joined = (
+        unmatched_by_id
+        .withColumn("op_name_key", normalize_station_name("station_name"))
+        .join(ops_unique_by_name, "op_name_key", "left")
+        .drop("op_name_key")
+    )
+
+    resolved = matched.unionByName(name_joined)
+
+    name_matched_count = name_joined.filter(F.col("op_ptcar_no").isNotNull()).count()
+    unmatched_count = name_joined.filter(F.col("op_ptcar_no").isNull()).count()
+    print(
+        f"enrich_stations: {matched.count()} ID-matched, "
+        f"{name_matched_count} name-matched, {unmatched_count} unmatched"
+    )
+
+    name_upper = F.upper(F.col("station_name"))
+    has_service_token = F.lit(False)
+    for token in SERVICE_INFRA_TOKENS:
+        has_service_token = has_service_token | name_upper.contains(token)
+
+    enriched = (
+        resolved
+        .withColumn("station_type", F.col("op_station_type"))
+        .withColumn(
+            "latitude",
+            F.expr("try_cast(trim(element_at(split(op_geo_point_2d, ','), 1)) AS DOUBLE)"),
+        )
+        .withColumn(
+            "longitude",
+            F.expr("try_cast(trim(element_at(split(op_geo_point_2d, ','), 2)) AS DOUBLE)"),
+        )
+        .withColumn(
+            "is_passenger",
+            F.when(
+                F.col("op_station_type").isNotNull(),
+                F.col("op_station_type").isin(*PASSENGER_CLASSES),
+            ).otherwise(~has_service_token),
+        )
+        .select("station_key", "station_type", "is_passenger", "latitude", "longitude")
+    )
+
+    passenger_count = enriched.filter(F.col("is_passenger")).count()
+    non_passenger_count = enriched.filter(~F.col("is_passenger")).count()
+    print(f"enrich_stations: {passenger_count} passenger, {non_passenger_count} non-passenger")
+
+    return enriched
+
 
 def deduplicate_stop_events(df: DataFrame) -> DataFrame:
     """Deduplicate records by natural key, retaining the latest ingested row."""

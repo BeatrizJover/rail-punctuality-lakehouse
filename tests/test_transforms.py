@@ -1,8 +1,8 @@
 # Unit tests for the silver-layer transformations.
 
-from src.rail.transforms import typed_stop_events, deduplicate_stop_events
+from src.rail.transforms import typed_stop_events, deduplicate_stop_events, enrich_stations
 from conftest import RAW_SCHEMA
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 from src.rail.transforms import (MONTHLY_DATE_COLUMNS, count_unparsed_dates, normalize_monthly_dates,)
 
@@ -98,3 +98,88 @@ def test_native_ptcar_is_read_only_when_requested(spark):
     withp = typed_stop_events(df, with_native_ptcar=True).collect()[0]
     assert without.ptcar_no is None
     assert withp.ptcar_no == 5678  # PTCAR_NO position in raw_row's conftest schema
+
+
+STATIONS_SCHEMA = StructType([
+    StructField("station_key", StringType(), True),
+    StructField("station_name", StringType(), True),
+    StructField("ptcar_no", IntegerType(), True),
+])
+
+OPERATIONAL_POINTS_SCHEMA = StructType([
+    StructField("ptcarid", StringType(), True),
+    StructField("longnamedutch", StringType(), True),
+    StructField("class_en", StringType(), True),
+    StructField("geo_point_2d", StringType(), True),
+])
+
+
+def test_enrich_stations_matches_by_ptcar_id(spark):
+    """ID match wins even when the reference name differs from dim_station's."""
+    stations = spark.createDataFrame(
+        [("k1", "ANY NAME", 123)], STATIONS_SCHEMA
+    )
+    ops = spark.createDataFrame(
+        [("123", "Different Name", "Station", "51.0182, 4.4801")], OPERATIONAL_POINTS_SCHEMA
+    )
+    row = enrich_stations(stations, ops).collect()[0]
+    assert row.station_type == "Station"
+    assert row.is_passenger
+    assert row.latitude == 51.0182
+    assert row.longitude == 4.4801
+
+
+def test_enrich_stations_falls_back_to_name(spark):
+    """An unmatched PTCAR ID still resolves through the normalized name."""
+    stations = spark.createDataFrame(
+        [("k2", "Mortsel-Deurnesteenweg", None)], STATIONS_SCHEMA
+    )
+    ops = spark.createDataFrame(
+        [("9", "MORTSEL-DEURNESTEENWEG", "Stop in open track", "51.19, 4.48")],
+        OPERATIONAL_POINTS_SCHEMA,
+    )
+    row = enrich_stations(stations, ops).collect()[0]
+    assert row.station_type == "Stop in open track"
+    assert row.is_passenger
+
+
+def test_enrich_stations_leaves_ambiguous_name_unmatched(spark):
+    """A reference name shared by two distinct PTCAR IDs is not usable for the fallback."""
+    stations = spark.createDataFrame([("k3", "BAULERS", None)], STATIONS_SCHEMA)
+    ops = spark.createDataFrame(
+        [
+            ("1", "BAULERS", "Station", "50.6, 4.5"),
+            ("2", "BAULERS", "Station", "50.6, 4.5"),
+        ],
+        OPERATIONAL_POINTS_SCHEMA,
+    )
+    row = enrich_stations(stations, ops).collect()[0]
+    assert row.station_type is None
+    assert row.latitude is None
+
+
+def test_enrich_stations_unmatched_with_service_token_is_not_passenger(spark):
+    stations = spark.createDataFrame([("k4", "SCHAARBEEK-BUNDEL", None)], STATIONS_SCHEMA)
+    ops = spark.createDataFrame([("1", "OTHER", "Station", "50.0, 4.0")], OPERATIONAL_POINTS_SCHEMA)
+    row = enrich_stations(stations, ops).collect()[0]
+    assert row.station_type is None
+    assert not row.is_passenger
+
+
+def test_enrich_stations_unmatched_without_token_is_passenger(spark):
+    stations = spark.createDataFrame([("k5", "SOME STATION", None)], STATIONS_SCHEMA)
+    ops = spark.createDataFrame([("1", "OTHER", "Station", "50.0, 4.0")], OPERATIONAL_POINTS_SCHEMA)
+    row = enrich_stations(stations, ops).collect()[0]
+    assert row.station_type is None
+    assert row.is_passenger
+
+
+def test_enrich_stations_parses_geo_point(spark):
+    """geo_point_2d is 'lat, lon' text, with or without a space after the comma."""
+    stations = spark.createDataFrame([("k6", "MECHELEN", 42)], STATIONS_SCHEMA)
+    ops = spark.createDataFrame(
+        [("42", "Mechelen", "Station", "50.8503,4.3517")], OPERATIONAL_POINTS_SCHEMA
+    )
+    row = enrich_stations(stations, ops).collect()[0]
+    assert row.latitude == 50.8503
+    assert row.longitude == 4.3517

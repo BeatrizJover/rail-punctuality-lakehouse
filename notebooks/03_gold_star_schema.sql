@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_station (
     station_name STRING,
     ptcar_no     INT,
     first_seen   DATE,
-    last_seen    DATE
+    last_seen    DATE,
+    station_type STRING,
+    is_passenger BOOLEAN,
+    latitude     DOUBLE,
+    longitude    DOUBLE
 )
 USING DELTA;
 
@@ -51,7 +55,8 @@ WHEN MATCHED THEN UPDATE SET
     t.ptcar_no     = coalesce(s.ptcar_no, t.ptcar_no),
     t.first_seen   = least(t.first_seen, s.first_seen),
     t.last_seen    = greatest(t.last_seen, s.last_seen)
-WHEN NOT MATCHED THEN INSERT *;
+WHEN NOT MATCHED THEN INSERT (station_key, station_name, ptcar_no, first_seen, last_seen)
+    VALUES (s.station_key, s.station_name, s.ptcar_no, s.first_seen, s.last_seen);
 
 -- dim_relation ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_relation (

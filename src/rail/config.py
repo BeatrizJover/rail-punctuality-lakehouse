@@ -36,5 +36,18 @@ DATASET_OPERATIONAL_POINT = "operationele-punten-van-het-netwerk"
 OPERATIONAL_POINT_LANDING = f"{LANDING}/reference"
 BRONZE_OPERATIONAL_POINT = f"{BRONZE}.operational_point"
 
+GOLD_DIM_STATION = f"{GOLD}.dim_station"
+
+# class_en values on operational_point that count as passenger-facing: staffed
+# stations plus unstaffed halts (stopplaatsen); verified against the reference.
+PASSENGER_CLASSES = ("Station", "Stop in open track")
+
+# Name tokens marking non-passenger infrastructure, applied only to unmatched
+# stations. Do not extend the list.
+SERVICE_INFRA_TOKENS = (
+    "-BUNDEL", "-FAISCEAU", "-T.W.", "-GASOIL", "-CARWASH", "-DOODSPOOR",
+    "-SEA-RO TERMINAL",
+)
+
 # Infrabel definition: a train is punctual below 6 minutes (max 5 min 59 s)
 PUNCTUAL_THRESHOLD_S = 360
