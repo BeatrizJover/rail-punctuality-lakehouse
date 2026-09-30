@@ -1,9 +1,7 @@
 # Silver layer transformations
 
-from pyspark.sql import DataFrame, Window
+from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
-
-from src.rail.config import PASSENGER_CLASSES, SERVICE_INFRA_TOKENS
 
 NATURAL_KEY = ["service_date", "train_no", "stop_point_key"]
 
@@ -20,6 +18,29 @@ def normalize_station_name(col: str):
     c = F.translate(c, _ACCENTED, _PLAIN)
     c = F.regexp_replace(c, r"\s+", " ")
     return c
+
+def _match_key(c: Column) -> Column:
+    """Alphanumeric-only uppercase key: same station name, any punctuation or spacing.
+
+    Ligatures are expanded before uppercasing rather than after, since
+    upper() case-folding œ/æ to their capital form is not guaranteed across
+    JVM locales.
+    """
+    c = F.trim(c)
+    c = F.regexp_replace(c, "[œŒ]", "OE")
+    c = F.regexp_replace(c, "[æÆ]", "AE")
+    c = F.upper(c)
+    c = F.translate(c, _ACCENTED, _PLAIN)
+    return F.regexp_replace(c, "[^A-Z0-9]", "")
+
+def station_match_key(col: str) -> Column:
+    """Name-matching key used to join dim_station against the iRail station list.
+
+    Separate from normalize_station_name, which feeds stop_point_key and must
+    not change: this key is punctuation-insensitive (no spaces or hyphens
+    survive), which normalize_station_name deliberately is not.
+    """
+    return _match_key(F.col(col))
 
 def typed_stop_events(
     raw: DataFrame,
@@ -78,20 +99,32 @@ def typed_stop_events(
         .withColumn("planned_hour", F.hour("planned_arr_ts"))
     )
 
-def enrich_stations(stations: DataFrame, operational_points: DataFrame) -> DataFrame:
+def enrich_stations(
+    stations: DataFrame, operational_points: DataFrame, irail_stations: DataFrame
+) -> DataFrame:
     """Classify dim_station rows and attach coordinates from Infrabel's
     operational-point reference (bronze.operational_point).
 
-    Resolution order: exact PTCAR ID match (`ptcar_no = try_cast(ptcarid AS
-    INT)`), then a normalized-name fallback for rows the ID misses. A
-    reference name that maps to more than one PTCAR ID is ambiguous and
-    excluded from the fallback -- such rows are left unmatched rather than
-    guessed at. station_type, latitude and longitude are NULL when unmatched;
-    is_passenger is never NULL, falling back to a naming-token heuristic for
-    known non-passenger infrastructure.
+    station_type resolution order: exact PTCAR ID match (`ptcar_no =
+    try_cast(ptcarid AS INT)`), then a normalized-name fallback for rows the
+    ID misses. A reference name that maps to more than one PTCAR ID is
+    ambiguous and excluded from the fallback -- such rows are left unmatched
+    rather than guessed at. station_type, latitude and longitude are NULL
+    when unmatched.
 
-    Expects `stations` with station_key, station_name, ptcar_no, and
-    `operational_points` with ptcarid, longnamedutch, class_en, geo_point_2d.
+    is_passenger comes from the iRail NMBS/SNCB station list instead of
+    class_en, which lumps yards and freight points under 'Station'. Pass 1
+    matches on station name (station_match_key); pass 2 falls back to
+    taftapcode, but only for iRail rows whose code is unique among candidates
+    and that pass 1 did not already claim -- iRail's code is known to be
+    wrong for a subset of stations, so an ambiguous code proves nothing.
+    Candidate iRail rows are Belgian ('be') with a non-empty taf-tap-code;
+    rows without one are border points or closed stations.
+
+    Expects `stations` with station_key, station_name, ptcar_no;
+    `operational_points` with ptcarid, longnamedutch, class_en, geo_point_2d,
+    taftapcode; `irail_stations` with name, alternative-nl, alternative-fr,
+    country-code, taf-tap-code.
     Returns station_key, station_type, is_passenger, latitude, longitude.
     """
     ops = operational_points.select(
@@ -99,6 +132,7 @@ def enrich_stations(stations: DataFrame, operational_points: DataFrame) -> DataF
         F.col("class_en").alias("op_station_type"),
         F.col("longnamedutch").alias("op_longnamedutch"),
         F.col("geo_point_2d").alias("op_geo_point_2d"),
+        F.trim(F.col("taftapcode")).alias("op_taftapcode"),
     )
 
     base = stations.select("station_key", "station_name", "ptcar_no")
@@ -139,10 +173,92 @@ def enrich_stations(stations: DataFrame, operational_points: DataFrame) -> DataF
         f"{name_matched_count} name-matched, {unmatched_count} unmatched"
     )
 
-    name_upper = F.upper(F.col("station_name"))
-    has_service_token = F.lit(False)
-    for token in SERVICE_INFRA_TOKENS:
-        has_service_token = has_service_token | name_upper.contains(token)
+    # Belgian iRail rows with a code: rows without one are border points or
+    # closed stations and cannot be used as a passenger signal either way.
+    irail_candidates = (
+        irail_stations
+        .filter(
+            (F.lower(F.col("country-code")) == "be")
+            & F.col("taf-tap-code").isNotNull()
+            & (F.trim(F.col("taf-tap-code")) != "")
+        )
+        .withColumn("irail_row_id", F.monotonically_increasing_id())
+        .select(
+            "irail_row_id",
+            F.trim(F.col("taf-tap-code")).alias("irail_code"),
+            F.col("name").alias("irail_name"),
+            F.col("alternative-nl").alias("irail_alt_nl"),
+            F.col("alternative-fr").alias("irail_alt_fr"),
+        )
+    )
+
+    # Bilingual names such as "Haren-Sud/Haren-Zuid" carry two valid keys.
+    name_candidates = F.filter(
+        F.array_distinct(
+            F.concat(
+                F.array(_match_key(F.col("irail_name"))),
+                F.transform(F.split(F.coalesce(F.col("irail_name"), F.lit("")), "/"), _match_key),
+                F.array(_match_key(F.col("irail_alt_nl"))),
+                F.array(_match_key(F.col("irail_alt_fr"))),
+            )
+        ),
+        lambda k: (k.isNotNull()) & (k != ""),
+    )
+    irail_names = (
+        irail_candidates
+        .select("irail_row_id", "irail_code", F.explode(name_candidates).alias("name_key"))
+    )
+
+    base_keys = base.withColumn("match_key", station_match_key("station_name"))
+
+    # Pass 1: match by name. A station can only be claimed once; an iRail row
+    # claimed by more than one station is logged, not silently kept or dropped.
+    pass1_hits = (
+        base_keys.join(irail_names, base_keys.match_key == irail_names.name_key, "inner")
+        .select("station_key", "irail_row_id")
+        .distinct()
+    )
+    pass1_station_keys = pass1_hits.select("station_key").distinct()
+    claimed_row_ids = pass1_hits.select("irail_row_id").distinct()
+    multi_claimed_count = (
+        pass1_hits.groupBy("irail_row_id")
+        .agg(F.countDistinct("station_key").alias("n"))
+        .filter(F.col("n") > 1)
+        .count()
+    )
+
+    # Pass 2: match by code, restricted to codes unique among candidates and
+    # not already claimed by name -- iRail's code is known wrong for some rows.
+    code_fanout = irail_candidates.groupBy("irail_code").agg(F.count("*").alias("fanout"))
+    unique_unclaimed_codes = (
+        irail_candidates
+        .join(code_fanout.filter(F.col("fanout") == 1).select("irail_code"), "irail_code")
+        .join(claimed_row_ids, "irail_row_id", "left_anti")
+        .select("irail_code")
+        .distinct()
+    )
+    station_taftapcode = base.join(
+        ops.select("op_ptcar_no", "op_taftapcode"), base.ptcar_no == F.col("op_ptcar_no"), "left"
+    ).select("station_key", "op_taftapcode")
+    pass2_station_keys = (
+        station_taftapcode
+        .join(
+            unique_unclaimed_codes,
+            station_taftapcode.op_taftapcode == unique_unclaimed_codes.irail_code,
+            "inner",
+        )
+        .join(pass1_station_keys, "station_key", "left_anti")
+        .select("station_key")
+        .distinct()
+    )
+
+    print(
+        f"enrich_stations: is_passenger {pass1_station_keys.count()} pass-1 name match(es), "
+        f"{pass2_station_keys.count()} pass-2 code match(es), "
+        f"{multi_claimed_count} iRail row(s) claimed by more than one station"
+    )
+
+    passenger_station_keys = pass1_station_keys.unionByName(pass2_station_keys).distinct()
 
     enriched = (
         resolved
@@ -155,13 +271,12 @@ def enrich_stations(stations: DataFrame, operational_points: DataFrame) -> DataF
             "longitude",
             F.expr("try_cast(trim(element_at(split(op_geo_point_2d, ','), 2)) AS DOUBLE)"),
         )
-        .withColumn(
-            "is_passenger",
-            F.when(
-                F.col("op_station_type").isNotNull(),
-                F.col("op_station_type").isin(*PASSENGER_CLASSES),
-            ).otherwise(~has_service_token),
+        .join(
+            passenger_station_keys.withColumn("is_passenger", F.lit(True)),
+            "station_key",
+            "left",
         )
+        .withColumn("is_passenger", F.coalesce(F.col("is_passenger"), F.lit(False)))
         .select("station_key", "station_type", "is_passenger", "latitude", "longitude")
     )
 

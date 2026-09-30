@@ -3,13 +3,14 @@
 
 from delta.tables import DeltaTable
 
-from src.rail.config import BRONZE_OPERATIONAL_POINT, GOLD_DIM_STATION
+from src.rail.config import BRONZE_IRAIL_STATION, BRONZE_OPERATIONAL_POINT, GOLD_DIM_STATION
 from src.rail.transforms import enrich_stations
 
 
 def refresh_station_enrichment(spark) -> None:
     """Recompute station_type, is_passenger, latitude and longitude for every
-    row in gold.dim_station from the current bronze.operational_point snapshot.
+    row in gold.dim_station from the current bronze.operational_point and
+    bronze.irail_station snapshots.
 
     dim_station's own MERGE source only holds the stations seen in a given
     run, so it can neither backfill the existing population nor pick up
@@ -19,8 +20,9 @@ def refresh_station_enrichment(spark) -> None:
     """
     stations = spark.table(GOLD_DIM_STATION).select("station_key", "station_name", "ptcar_no")
     operational_points = spark.table(BRONZE_OPERATIONAL_POINT)
+    irail_stations = spark.table(BRONZE_IRAIL_STATION)
 
-    enriched = enrich_stations(stations, operational_points)
+    enriched = enrich_stations(stations, operational_points, irail_stations)
 
     target = DeltaTable.forName(spark, GOLD_DIM_STATION)
     (
