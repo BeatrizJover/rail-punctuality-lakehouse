@@ -38,6 +38,11 @@ BRONZE_OPERATIONAL_POINT = f"{BRONZE}.operational_point"
 
 GOLD_DIM_STATION = f"{GOLD}.dim_station"
 
+# CC0-licensed NMBS/SNCB station list, used to derive is_passenger: Infrabel's
+# class_en = 'Station' also includes yards and freight points this list omits.
+IRAIL_STATIONS_URL = "https://raw.githubusercontent.com/iRail/stations/master/stations.csv"
+BRONZE_IRAIL_STATION = f"{BRONZE}.irail_station"
+
 # class_en values on operational_point that count as passenger-facing: staffed
 # stations plus unstaffed halts (stopplaatsen); verified against the reference.
 PASSENGER_CLASSES = ("Station", "Stop in open track")

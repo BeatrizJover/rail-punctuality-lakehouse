@@ -29,6 +29,14 @@ REQUIRED_OPERATIONAL_POINT_COLUMNS = [
     "geo_point_2d",
 ]
 
+# Columns the crosswalk to operational_point.taftapcode and downstream
+# is_passenger classification depend on.
+REQUIRED_IRAIL_STATION_COLUMNS = [
+    "taf-tap-code",
+    "country-code",
+    "name",
+]
+
 
 class StaleExportError(RuntimeError):
     """The upstream export does not yet contain the expected service date."""
@@ -83,4 +91,21 @@ def validate_operational_point_export(content: bytes, sep: str) -> int:
     row_count = sum(1 for _ in reader)
     if row_count == 0:
         raise ValueError("operational point export contains no rows")
+    return row_count
+
+
+def validate_irail_station_export(content: bytes) -> int:
+    """Check the iRail station list is non-empty and has the required columns.
+
+    Every column is kept as published in Bronze, with no declared DDL to enforce
+    a schema, so a silently renamed upstream column would otherwise land as a
+    table with missing fields instead of failing the run.
+    """
+    reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
+    missing = set(REQUIRED_IRAIL_STATION_COLUMNS) - set(reader.fieldnames or [])
+    if missing:
+        raise ValueError(f"iRail station export missing required columns: {sorted(missing)}")
+    row_count = sum(1 for _ in reader)
+    if row_count == 0:
+        raise ValueError("iRail station export contains no rows")
     return row_count

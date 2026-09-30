@@ -4,14 +4,17 @@ import pytest
 
 from src.rail.ingest import (
     REQUIRED_D1_COLUMNS,
+    REQUIRED_IRAIL_STATION_COLUMNS,
     REQUIRED_OPERATIONAL_POINT_COLUMNS,
     StaleExportError,
     validate_d1_export,
+    validate_irail_station_export,
     validate_operational_point_export,
 )
 
 HEADER = ";".join(REQUIRED_D1_COLUMNS)
 OP_HEADER = ";".join(REQUIRED_OPERATIONAL_POINT_COLUMNS + ["classification", "class_fr"])
+IRAIL_HEADER = ",".join(["URI"] + REQUIRED_IRAIL_STATION_COLUMNS + ["longitude", "latitude"])
 
 
 def payload(rows, bom=False):
@@ -83,3 +86,26 @@ def test_operational_point_missing_required_column_raises_value_error():
     content = ("ptcarid;longnamedutch\n7;AALST-OOST").encode("utf-8")
     with pytest.raises(ValueError):
         validate_operational_point_export(content, ";")
+
+
+def irail_payload(rows):
+    text = "\n".join([IRAIL_HEADER, *rows])
+    return text.encode("utf-8")
+
+
+def test_irail_station_export_returns_row_count():
+    row = "http://irail.be/stations/NMBS/008892007,Aalst,,,,,880,FAST,be,4.03730,50.94235"
+    content = irail_payload([row, row])
+    assert validate_irail_station_export(content) == 2
+
+
+def test_irail_station_empty_export_raises_value_error():
+    content = irail_payload([])
+    with pytest.raises(ValueError):
+        validate_irail_station_export(content)
+
+
+def test_irail_station_missing_required_column_raises_value_error():
+    content = ("URI,name\nhttp://irail.be/stations/NMBS/008892007,Aalst").encode("utf-8")
+    with pytest.raises(ValueError):
+        validate_irail_station_export(content)
