@@ -26,4 +26,7 @@ htmlcov/
 
 # OS files
 .DS_Store
-Thumbs.dbscratch/
+Thumbs.db
+
+# Throwaway validation scratchpad, never a bundle resource
+scratch/
