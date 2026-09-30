@@ -21,6 +21,7 @@ from pyspark.sql import functions as F
 
 from src.rail.config import BRONZE_RAW_MONTHLY, SILVER_STOP, PUNCTUAL_THRESHOLD_S
 from src.rail.transforms import typed_stop_events, deduplicate_stop_events
+from src.rail.gold_maintenance import refresh_station_enrichment
 
 # COMMAND ----------
 
@@ -129,8 +130,14 @@ WHEN MATCHED THEN UPDATE SET
     t.ptcar_no     = coalesce(s.ptcar_no, t.ptcar_no),
     t.first_seen   = least(t.first_seen, s.first_seen),
     t.last_seen    = greatest(t.last_seen, s.last_seen)
-WHEN NOT MATCHED THEN INSERT *
+WHEN NOT MATCHED THEN INSERT (station_key, station_name, ptcar_no, first_seen, last_seen)
+    VALUES (s.station_key, s.station_name, s.ptcar_no, s.first_seen, s.last_seen)
 """)
+
+# Full-table refresh of station_type/is_passenger/latitude/longitude: the
+# MERGE above only touched this year's stations, so classification for the
+# rest of the table (and any reclassification) still needs this pass.
+refresh_station_enrichment(spark)
 
 spark.sql(f"""
 MERGE INTO rail_punctuality.gold.dim_relation t
