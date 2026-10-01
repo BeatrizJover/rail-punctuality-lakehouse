@@ -13,58 +13,82 @@ The pipeline runs as a scheduled Databricks Job, deployed end to end with Databr
 ## Architecture
 
 ```mermaid
+%%{init: {'themeVariables': {'fontSize': '18px'}}}%%
 flowchart LR
-    subgraph Sources[Infrabel ODS API]
-        D1[D-1 daily export]
-        MO[Monthly export]
+    subgraph SRC["🌐 Sources"]
+        D1["D-1 daily export"]
+        MO["Monthly export"]
+        RF["Reference datasets<br/>Infrabel · iRail"]
     end
 
-    subgraph Bronze
-        BR[punctuality_raw]
-        BM[punctuality_raw_monthly]
-        BS[station_ref]
+    subgraph BRZ["🥉 Bronze · as received"]
+        BR["punctuality_raw"]
+        BM["punctuality_raw_monthly"]
+        BS["station_ref"]
+        BO["operational_point<br/>irail_station"]
     end
 
-    subgraph Silver
-        SS[stop_event]
+    subgraph SLV["🥈 Silver · typed, deduplicated"]
+        SS["stop_event"]
     end
 
-    subgraph Gold
-        DD[dim_date]
-        DS[dim_station]
-        DR[dim_relation]
-        FE[fact_stop_event]
+    subgraph GLD["🥇 Gold · star schema"]
+        FE["⭐ fact_stop_event"]
+        DS["dim_station"]
+        DR["dim_relation"]
+        DD["dim_date"]
     end
 
-    OPS[(ops.dq_results)]
-    PBI[Power BI<br/>DirectQuery]
-    EXP[Parquet export<br/>+ coverage manifest]
-    RAG[Downstream<br/>RAG layer]
+    PBI["📊 Power BI · Import"]
+    EXP["📦 Parquet export<br/>+ coverage manifest"]
+    RAG["🤖 Downstream RAG"]
+    OPS[("🔍 ops.dq_results")]
 
     D1 -->|01 Auto Loader| BR
-    MO -->|90 download + 01c ingest| BM
-    MO -->|90 download + 01b crosswalk| BS
+    MO -.->|90 + 01c| BM
+    MO -.->|90 + 01b| BS
+    RF -.->|01d · 01e| BO
     BR -->|02 daily| SS
-    BM -->|91 backfill, native PTCAR_NO| SS
-    BS -->|left join on stop_point_name_key| SS
-    BR -.->|schema drift check| OPS
-    SS -.->|checks + coverage| OPS
+    BM -.->|91 backfill| SS
+    BS -->|left join on name key| SS
+    SS --> FE
     SS --> DS
     SS --> DR
-    SS --> FE
-    Gold --> PBI
-    Gold -->|92 / 92b| EXP
+    BO -->|03b enrichment| DS
+    BR -.->|schema drift| OPS
+    SS -.->|checks + coverage| OPS
+    GLD --> PBI
+    GLD -.->|92 / 92b| EXP
     EXP --> RAG
+
+    classDef src fill:#e8eaf0,stroke:#5b6b8c,color:#1a1a1a
+    classDef brz fill:#f6e3d0,stroke:#b07d45,color:#1a1a1a
+    classDef slv fill:#e4e9ee,stroke:#7a8ca0,color:#1a1a1a
+    classDef gld fill:#fbf0cc,stroke:#c9a227,color:#1a1a1a
+    classDef out fill:#d9f0e3,stroke:#3f9e72,color:#1a1a1a
+    classDef ops fill:#fadfd9,stroke:#c7563f,color:#1a1a1a
+
+    class D1,MO,RF src
+    class BR,BM,BS,BO brz
+    class SS slv
+    class FE,DS,DR,DD gld
+    class PBI,EXP,RAG out
+    class OPS ops
+
+    style SRC fill:#f4f5f9,stroke:#5b6b8c,color:#1a1a1a
+    style BRZ fill:#fbf1e6,stroke:#b07d45,color:#1a1a1a
+    style SLV fill:#f1f4f7,stroke:#7a8ca0,color:#1a1a1a
+    style GLD fill:#fdf8e6,stroke:#c9a227,color:#1a1a1a
 ```
 
-Solid edges carry data; dotted edges carry observations about it. Edge labels reference the notebook that performs the step. `dim_date` is a generated calendar with no upstream dependency.
+Solid edges are the scheduled path; dotted edges are ad-hoc loads or observations about the data. Edge labels reference the notebook that performs the step. `dim_date` is a generated calendar with no upstream dependency.
 
 ## Table of Contents
 
 - [Problem Statement](#problem-statement)
 - [Project at a Glance](#project-at-a-glance)
-- [Key Design Decisions](#key-design-decisions)
 - [Data Sources](#data-sources)
+- [Key Design Decisions](#key-design-decisions)
 - [Schema Governance](#schema-governance)
 - [Data Model](#data-model)
 - [Pipeline Orchestration](#pipeline-orchestration)
@@ -97,30 +121,13 @@ The data was not prepared for analysis. The two exports differ in delimiter, dat
 |---|---|
 | **Data** | Infrabel raw punctuality — one row per train per measuring point per service date |
 | **History loaded** | January 2024 onward — monthly backfill for closed months, daily feed for the current one |
-| **Volume** | ~61M rows in `gold.fact_stop_event`, across 701 measuring points and 566 relations; ~2M rows / ~300 MB per monthly file; ~75k rows per weekday and ~45k per weekend day from the daily feed |
+| **Volume** | ~61M rows in `gold.fact_stop_event`, across 701 measuring points — 559 of them passenger stations — and 566 relations; ~2M rows / ~300 MB per monthly file; ~75k rows per weekday and ~45k per weekend day from the daily feed |
 | **Cadence** | Daily at 07:00 Europe/Brussels; monthly backfill on demand, one year per run |
 | **Daily runtime** | ~3 minutes end to end |
 | **Compute** | Databricks Free Edition — serverless jobs compute and a SQL Warehouse |
 | **Deployment** | Databricks Asset Bundles; job definition versioned in Git |
-| **Consumers** | Power BI (DirectQuery); date-partitioned Parquet export for [rail-punctuality-rag](https://github.com/BeatrizJover/rail-punctuality-rag) |
-| **Quality gates** | 14 pytest unit tests and ruff on every push (GitHub Actions); 6 data quality rules per scheduled run |
-
-## Key Design Decisions
-
-Each decision below is detailed in the linked section.
-
-| Decision | Alternative considered | Rationale |
-|---|---|---|
-| Station identity from an MD5 of the normalized name (`stop_point_key`) — [Data Sources](#data-sources) | `PTCAR_NO`, Infrabel's official station ID | Absent from the daily feed; keying on it would make daily ingestion wait for the monthly publication |
-| Explicit *monthly-wins* `MERGE` condition — [Data Model](#data-model) | Last write wins, by arrival order | Overlapping feeds converge to the same state regardless of run order |
-| Rescue mode for daily, declared contract for monthly — [Schema Governance](#schema-governance) | One schema policy for both feeds | A daily load must not stop on a new upstream column; a backfill must not load a file it was not built for |
-| Gold maintained by `MERGE` scoped to one `service_date` — [Pipeline Orchestration](#pipeline-orchestration) | `CREATE OR REPLACE` from a full Silver scan | Daily runtime stays flat as history grows |
-| `least` / `greatest` / `coalesce` in dimension merges — [Data Model](#data-model) | Recomputed attributes and stored counts | Idempotent under reruns, correct under out-of-order backfills |
-| Additive fact measures (`stop_events`, `punctual_arrivals`) — [Data Model](#data-model) | Pre-computed rates | Punctuality is `SUM / SUM` at any grain, never an average of averages |
-| Rule outcomes appended to `ops.dq_results` — [Data Quality](#data-quality) | Checks that only log or raise | Quality becomes queryable history rather than a transient log line |
-| Fail the run on a stale D-1 export — [Pipeline Orchestration](#pipeline-orchestration) | Land whatever the fetch returned | A file that silently holds the previous service date is worse than a failed task the retry policy can recover from |
-| Power BI in DirectQuery — [Consumption](#consumption) | Import mode | The warehouse stays the single source of truth for ~61M growing rows, with no dataset refresh to keep in sync with the job; iterator-heavy DAX is deferred |
-| Parquet export with a producer-owned manifest — [Consumption](#consumption) | Consumers query Databricks directly | Credential-free, transport-independent interface for downstream projects |
+| **Consumers** | Power BI (Import); date-partitioned Parquet export for [rail-punctuality-rag](https://github.com/BeatrizJover/rail-punctuality-rag) |
+| **Quality gates** | 32 pytest unit tests and ruff on every push (GitHub Actions); 6 data quality rules per scheduled run |
 
 ## Data Sources
 
@@ -145,7 +152,40 @@ It is not available on the incremental path. `PTCAR_NO` is carried only by the m
 
 **Surrogate key for the Silver grain.** Station identity is therefore derived from a deterministic surrogate: `stop_point_key`, an MD5 hash of the normalized, accent-stripped station name. It is the `MERGE` and clustering key for `silver.stop_event`, and it is reproducible from the daily feed alone. `PTCAR_NO` is *demoted from a join dependency to a nullable enrichment attribute*: read natively when the row comes from the monthly export (`with_native_ptcar=True`), and otherwise left-joined in from the monthly-derived `bronze.station_ref` crosswalk on the same normalized name, with `coalesce(native, crosswalk)` deciding.
 
-**Operational points reference.** A third, independent source — `operationele-punten-van-het-netwerk` ("operational points of the network"), CC0, published on the Infrabel OpenDataSoft portal — is ingested ad hoc by `01d_bronze_operational_point.py` into `bronze.operational_point`. It is republished **quarterly** as a full snapshot, not appended, and carries `ptcarid` (the same identifier as `PTCAR_NO`, published as text), commercial and BVT station name variants, and a classification in three languages. It is landed as-is, with no join into Silver yet; it unblocks the station classification work tracked on the [Roadmap](#roadmap). **Coordinates are schematic**: Infrabel states the data targets a maximum scale of 1/25,000, with a single position sometimes representing up to ~3 km of platforms — it supports a network map, not distance-based analysis.
+**Operational points reference.** A third, independent source — `operationele-punten-van-het-netwerk` ("operational points of the network"), CC0, published on the Infrabel OpenDataSoft portal — is ingested ad hoc by `01d_bronze_operational_point.py` into `bronze.operational_point`. It is republished **quarterly** as a full snapshot, not appended, and carries `ptcarid` (the same identifier as `PTCAR_NO`, published as text), commercial and BVT station name variants, and a classification in three languages. It is landed as-is and joined into `gold.dim_station`, not into Silver, which keeps the Silver grain free of a quarterly publication cycle. **Coordinates are schematic**: Infrabel states the data targets a maximum scale of 1/25,000, with a single position sometimes representing up to ~3 km of platforms — it supports a network map, not distance-based analysis.
+
+### Reference data
+
+Two reference datasets enrich `gold.dim_station`. Neither is a feed: both are full snapshots, landed ad-hoc and overwritten on each run.
+
+| | `bronze.operational_point` | `bronze.irail_station` |
+|---|---|---|
+| Source | Infrabel, *operationele punten van het netwerk* | iRail `stations.csv`, generated from the NMBS/SNCB public GTFS |
+| Cadence | Republished quarterly | Community-maintained, actively updated |
+| Entrypoint | `01d_bronze_operational_point.py` (ad-hoc) | `01e_bronze_irail_station.py` (ad-hoc) |
+| Contributes | `station_type`, `latitude`, `longitude` | `is_passenger` |
+
+The Infrabel reference was brought in first, to replace a volume threshold with an official classification. It did not deliver the distinction the report needed. `class_en = 'Station'` is an operational class: it covers marshalling yards, freight terminals and workshops alongside passenger stations — around 100 of them among the project's 701 measuring points. Neither the commercial name, the TAF/TAP code nor the telegraph abbreviation separates the two, since every operating point carries all three in the same format. The infrastructure manager records where trains can be handled, not where passengers board.
+
+That distinction belongs to the operator, which is why the iRail station list was added. It is derived from the NMBS/SNCB GTFS and lists the stations the operator serves. `enrich_stations` claims a station on the punctuation-insensitive station name (`station_match_key`, matched against the iRail name, each half of a bilingual `A/B` name, and the Dutch and French alternatives), then falls back to the TAF/TAP code for the stations the name pass missed — only where that code is unique among the Belgian candidates and belongs to an iRail row no station has already claimed, since iRail's code is known to be wrong for a subset of rows.
+
+## Key Design Decisions
+
+Each decision below is detailed in the linked section.
+
+| Decision | Alternative considered | Rationale |
+|---|---|---|
+| Station identity from an MD5 of the normalized name (`stop_point_key`) — [Data Sources](#data-sources) | `PTCAR_NO`, Infrabel's official station ID | Absent from the daily feed; keying on it would make daily ingestion wait for the monthly publication |
+| Explicit *monthly-wins* `MERGE` condition — [Data Model](#data-model) | Last write wins, by arrival order | Overlapping feeds converge to the same state regardless of run order |
+| Rescue mode for daily, declared contract for monthly — [Schema Governance](#schema-governance) | One schema policy for both feeds | A daily load must not stop on a new upstream column; a backfill must not load a file it was not built for |
+| Gold maintained by `MERGE` scoped to one `service_date` — [Pipeline Orchestration](#pipeline-orchestration) | `CREATE OR REPLACE` from a full Silver scan | Daily runtime stays flat as history grows |
+| `least` / `greatest` / `coalesce` in dimension merges — [Data Model](#data-model) | Recomputed attributes and stored counts | Idempotent under reruns, correct under out-of-order backfills |
+| Additive fact measures (`stop_events`, `punctual_arrivals`) — [Data Model](#data-model) | Pre-computed rates | Punctuality is `SUM / SUM` at any grain, never an average of averages |
+| Rule outcomes appended to `ops.dq_results` — [Data Quality](#data-quality) | Checks that only log or raise | Quality becomes queryable history rather than a transient log line |
+| Fail the run on a stale D-1 export — [Pipeline Orchestration](#pipeline-orchestration) | Land whatever the fetch returned | A file that silently holds the previous service date is worse than a failed task the retry policy can recover from |
+| Power BI in Import mode — [Consumption](#consumption) | DirectQuery, the original design | On Free Edition the warehouse scales to zero, so every visual paid a cold start and interaction latency became the binding constraint. Import removes it and makes iterator-heavy DAX viable, at the cost of a refresh to keep in sync with the job |
+| Passenger scope from the operator's station list — [Data Sources](#data-sources) | Infrabel's own `class_en`, or a minimum-volume threshold | Infrabel classifies operating points, not passenger service: its `Station` class covers yards and freight terminals alongside stations. A volume threshold only approximates the same split |
+| Parquet export with a producer-owned manifest — [Consumption](#consumption) | Consumers query Databricks directly | Credential-free, transport-independent interface for downstream projects |
 
 ## Schema Governance
 
@@ -187,7 +227,7 @@ A monthly row always overwrites; a daily row overwrites only another daily row. 
 | Table | Key | Notes |
 |---|---|---|
 | `gold.dim_date` | `date_key` | Generated calendar, 2014–2027, with weekend flag |
-| `gold.dim_station` | `station_key` | Station name, nullable `ptcar_no`, and `first_seen` / `last_seen` maintained as idempotent accumulators |
+| `gold.dim_station` | `station_key` | Station name, `ptcar_no`, `first_seen` / `last_seen` maintained as idempotent accumulators, plus the reference attributes `station_type`, `is_passenger`, `latitude` and `longitude` |
 | `gold.dim_relation` | `relation_key` | MD5 of `relation \| direction \| operator` |
 | `gold.fact_stop_event` | `date_key`, `station_key`, `train_no` | Grain key and `MERGE` predicate. Clustered by `(date_key, station_key)` |
 
@@ -199,6 +239,7 @@ A monthly row always overwrites; a daily row overwrites only another daily row. 
 
 - **No fact-derived measures in a dimension.** `dim_station` deliberately carries no stored stop-event count. A `count(*)` of fact rows cannot be maintained incrementally — adding the day's batch double-counts on any repair run, and computing it exactly requires the full Silver scan the incremental design removes. It belongs in the BI layer as `SUM(stop_events)` over `fact_stop_event`, which respects the report's date filters, where a static column would not. The one-shot `00_migration_dim_station_reseed.sql` removed the former column.
 - **Idempotent accumulators over additive ones.** `first_seen` and `last_seen` are merged with `least()` / `greatest()` rather than recomputed. This is idempotent under reruns and self-correcting when a historical year is backfilled *after* a more recent one. `station_name` and `ptcar_no` use `coalesce(source, target)`, so a NULL `PTCAR_NO` from the daily feed never erases a value already known from the monthly feed — applying the monthly-wins rule to the dimension as well.
+- **Scope materialised on the dimension, not in the BI layer.** `is_passenger` is the report's population definition, and it is never null: a station the iRail list does not claim resolves to `false` rather than unknown, so the scope is closed and a report-level filter needs no null handling. That is also why the match is deliberately generous — name first, TAF/TAP code second — since an unmatched station leaves the report's population rather than surfacing as a gap. `station_type` keeps Infrabel's `class_en` as a descriptive attribute and is left null when a station is absent from the reference; it is not used for scoping, because the class describes how an operating point is run, not whether passengers board there. Coordinates are schematic — Infrabel publishes them at a maximum scale of 1/25,000, so they place a station on a network map and must not be used for distance analysis.
 
 ## Pipeline Orchestration
 
@@ -210,6 +251,7 @@ The job runs daily at **07:00 Europe/Brussels** on serverless compute (Databrick
 flowchart LR
     A[bronze_ingest] --> B[silver_transform]
     B --> C[gold_star_schema]
+    C --> E[gold_station_enrichment]
     B --> D[data_quality]
 ```
 
@@ -220,6 +262,7 @@ flowchart LR
 - **`bronze_ingest`** — fetches the D-1 export over HTTP, validates that it actually covers the expected service date, stages it to a Unity Catalog Volume, and incrementally ingests it into `bronze.punctuality_raw` with Auto Loader. Retries run at a **1-hour interval**: long enough for a late upstream publication to land without burning through attempts immediately, short enough to leave room for manual intervention within the ~23-hour window before the next scheduled run.
 - **`silver_transform`** — types, deduplicates, and enriches Bronze data, then `MERGE`s into `silver.stop_event` under the monthly-wins rule. On completion it publishes the run's `service_date` as a Databricks Jobs task value.
 - **`gold_star_schema`** and **`data_quality`** run in parallel once Silver completes, since neither depends on the other. Both consume the `service_date` task value — Gold receives it as a SQL task parameter and binds it to a session variable. `dim_date` is a static calendar created once; the dimensions are upserted by `MERGE` scoped to the run's `service_date`, and the fact is `MERGE`d for the same date with the target pruned on `date_key`. No statement in the task scans Silver in full.
+- **`gold_station_enrichment`** — re-derives `station_type`, `is_passenger`, `latitude` and `longitude` across the whole of `dim_station` from the reference tables, merging back only the rows whose values changed. A full pass over ~700 rows costs less than tracking which stations the day's batch touched, and it means a new quarterly snapshot is picked up on the next run with no backfill. It reads `bronze.irail_station`, which is landed ad-hoc by `01e`.
 
 Failure notifications are configured at the **job level**, so every task is covered by alerting.
 
@@ -277,9 +320,11 @@ Rule definitions and evaluation logic live in `src/rail/quality.py`, separated f
 
 ### Power BI
 
-The report connects to the Databricks SQL Warehouse in **DirectQuery** mode over the Gold star schema, with relationships from `fact_stop_event` to the three dimensions. Measures are built on the additive columns — punctuality rate is `DIVIDE(SUM(punctual_arrivals), SUM(stop_events))`, never an average of per-row flags.
+The report is a Power BI Desktop model in **Import** mode over the Gold star schema, with relationships from `fact_stop_event` to the three dimensions. Measures are built on the additive columns — punctuality rate is `DIVIDE(SUM(punctual_arrivals), SUM(stop_events))`, never an average of per-row flags.
 
-DirectQuery is a deliberate trade-off. The fact table holds ~61M rows and grows daily, so Databricks stays the single source of truth and there is no dataset refresh to keep in sync with the job. The cost is that every visual issues SQL against the warehouse, including a cold start when serverless has scaled to zero, so iterator-heavy DAX such as `PERCENTILEX.INC` (P90 delay) is deferred rather than silently approximated. If interaction latency becomes the binding constraint, the next step is a pre-aggregated Gold table consumed in Import mode, not a switch of the whole model.
+The model was first built in DirectQuery, so that Databricks stayed the single source of truth with no dataset refresh to keep in sync with the job. On Free Edition the warehouse scales to zero: every visual paid a cold start, and interaction latency became the binding constraint. Import resolves it and makes iterator-heavy DAX such as `PERCENTILEX.INC` (P90 delay) viable. The cost is a refresh after each load.
+
+Every page is scoped by a report-level filter on `dim_station[is_passenger]`. Punctuality is only meaningful where passengers board, and the filter propagates from the dimension to the fact, so the cards and trends share the same population as the station visuals.
 
 ### Published Gold export
 
@@ -318,14 +363,17 @@ rail-punctuality-lakehouse/
 │   └── rail_punctuality_daily.job.yml         # Job definition — single source of truth
 ├── notebooks/                                 # Thin task entrypoints
 │   ├── 00_setup.sql                           # Catalog, schemas, volumes
+│   ├── 00_migration_dim_station_enrichment.py # One-shot: add and backfill station attributes
 │   ├── 00_migration_dim_station_reseed.sql    # One-shot: drop the fact-derived column
 │   ├── 00_migration_silver_source_feed.sql    # One-shot: add and backfill source_feed
 │   ├── 01_bronze_ingest.py                    # D-1 fetch + Auto Loader ingest        [scheduled]
 │   ├── 01b_bronze_stop_point_reference.py     # Monthly-derived station crosswalk     [ad-hoc]
 │   ├── 01c_bronze_monthly_ingest.py           # Monthly export ingest, one year/run   [ad-hoc]
 │   ├── 01d_bronze_operational_point.py        # Operational points reference          [ad-hoc]
+│   ├── 01e_bronze_irail_station.py            # iRail NMBS/SNCB station list          [ad-hoc]
 │   ├── 02_silver_transform.py                 # Type, dedup, enrich, MERGE            [scheduled]
 │   ├── 03_gold_star_schema.sql                # Incremental dimensional model         [scheduled]
+│   ├── 03b_gold_station_enrichment.py         # Station attribute refresh             [scheduled]
 │   ├── 04_data_quality.py                     # DQ orchestration                      [scheduled]
 │   ├── 90_backfill_history.py                 # Monthly file download utility         [ad-hoc]
 │   ├── 91_backfill_silver_gold.py             # Silver + Gold backfill, one year/run  [ad-hoc]
@@ -335,7 +383,8 @@ rail-punctuality-lakehouse/
 │   └── rail/                                  # Testable, importable pipeline logic
 │       ├── __init__.py
 │       ├── config.py                          # Catalog names, endpoints, thresholds
-│       ├── ingest.py                           # D-1 export validation (stale / empty payloads)
+│       ├── ingest.py                          # Export validation — D-1 and reference feeds
+│       ├── gold_maintenance.py                # Gold dimension attribute refresh
 │       ├── transforms.py                      # Silver typing / dedup / date normalization
 │       └── quality.py                         # DQ rule definitions + evaluation
 └── tests/
@@ -357,7 +406,7 @@ Notebooks stay thin: anything with logic worth testing lives in `src/rail/` and 
 - **Modeling**: Medallion architecture (Bronze / Silver / Gold), star schema
 - **Publishing**: Parquet on Unity Catalog Volumes / Azure Blob (ABFS), PyArrow for contract verification
 - **Data source**: Infrabel / SNCB via the OpenDataSoft API
-- **Analytics**: Power BI Service, DirectQuery *(report in progress)*
+- **Analytics**: Power BI Desktop, Import mode over the Gold star schema
 - **Testing / CI**: pytest, ruff, GitHub Actions
 
 ## Getting Started
@@ -417,15 +466,19 @@ Both commands run on every push to `main` and on every pull request via `.github
 
 ## Dashboard
 
-*Power BI report in progress — four pages planned: Network Health, By Station, By Relation / Operator, and Temporal Analysis. Screenshots and report notes to follow.*
+![Belgian Rail Network Health](docs/img/dashboard_network_health.png)
+
+A single page, **Belgian Rail Network Health**, scoped to passenger stations: four headline cards, a monthly punctuality trend split by year, punctuality by hour of day, the eight least punctual stations, and delays broken down by relation and operator. Date range and train operator are slicers.
+
+The stop-event count on the page reads lower than the ~61M rows in `fact_stop_event` because of the passenger scope; the difference is observations at yards, workshops and service points.
 
 ## Roadmap
 
 | Module / Layer | Primary Objective | Status | Priority |
 | :--- | :--- | :---: | :---: |
 | **Bronze Layer** | D-1 fetch guard — reject stale or empty exports before landing, and name landed files by fetch timestamp | ✅ Done | — |
-| **Bronze Layer** | Station crosswalk (`01b`): build from `bronze.punctuality_raw_monthly` across all loaded months, with a deterministic `ptcar_no` tie-breaker — it currently reads a single configured month and keeps `first()` | ⏳ Pending | High |
-| **Bronze Layer** | Station classification: profile `bronze.operational_point` (landed by `01d`) and join it into `dim_station` on `ptcarid` / `PTCAR_NO`, choosing between the BVT and commercial name families and a `class_en` mapping — depends on `01b`'s crosswalk fix above for a clean join key | ⏳ Pending | Medium |
+| **Bronze Layer** | Station crosswalk (`01b`): build from `bronze.punctuality_raw_monthly` across all loaded months with a deterministic `ptcar_no` tie-breaker — it still reads a single configured month and keeps `first()`. Profiling against the official reference found 696 of 696 comparable stations agree, so the non-determinism has not produced a wrong assignment | ⏳ Pending | Low |
+| **Bronze Layer** | Station classification — `dim_station` carries `station_type`, `is_passenger` and coordinates, derived from the Infrabel operating-point reference and the operator's station list | ✅ Done | — |
 | **Silver Layer** | Bounded Bronze read window — each daily run re-reads the full daily Bronze table and rewrites every daily Silver row (≈2.06M source rows on 2026-09-17, growing ~75k per day); plus blank station name filtering | ⏳ Pending | High |
 | **Data Quality** | Empty-partition rule — row-level checks read as PASS on a day with zero rows | ⏳ Pending | High |
 | **Data Quality** | Alert on failed assertions — outcomes are recorded, not enforced | ⏳ Pending | Medium |
@@ -440,7 +493,7 @@ Both commands run on every push to `main` and on every pull request via `.github
 | **Publishing** | Azure Blob transport (`92`) — implemented; storage account and secret scope not configured | ⏳ Pending | Low |
 | **Platform** | Environment isolation — the catalog name is hard-coded in `config.py`, the SQL notebooks and several Python notebooks, and the bundle's `catalog` / `schema` variables are declared but not consumed, so `dev` and `prod` targets write to the same catalog | ⏳ Pending | Medium |
 | **Platform** | CI: pytest and ruff on every push via GitHub Actions | ✅ Done | — |
-| **Analytics** | Power BI report, four pages | 🚧 In progress | High |
+| **Analytics** | Power BI report — Network Health page | ✅ Done | — |
 | **Maintenance** | File compaction and retention (`OPTIMIZE`, `VACUUM`) — delegated to Databricks Predictive Optimization on Unity Catalog managed tables | ✅ Platform-managed | — |
 
 ## Author
