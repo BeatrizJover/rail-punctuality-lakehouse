@@ -34,6 +34,13 @@ targets:
     variables:
       catalog: rail_punctuality_project
       schema: ${workspace.current_user.short_name}
+    resources:
+      jobs:
+        rail_punctuality_daily:
+          schedule:
+            quartz_cron_expression: 0 0 7 * * ?
+            timezone_id: Europe/Brussels
+            pause_status: PAUSED
   prod:
     mode: production
     workspace:
