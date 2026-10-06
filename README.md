@@ -10,6 +10,40 @@ A medallion-architecture lakehouse on Databricks that ingests Belgian rail punct
 
 The pipeline runs as a scheduled Databricks Job, deployed end to end with Databricks Asset Bundles. It is built around production concerns: incremental processing, idempotent reruns and backfills, data quality recorded as data, and transformation logic that is unit-tested outside Databricks.
 
+![Project diagram](docs/img/project_diagram.png)
+
+## Table of Contents
+
+- [Problem Statement](#problem-statement)
+- [Architecture](#architecture)
+- [Data Sources](#data-sources)
+- [Key Design Decisions](#key-design-decisions)
+- [Schema Governance](#schema-governance)
+- [Data Model](#data-model)
+- [Pipeline Orchestration](#pipeline-orchestration)
+- [Data Quality](#data-quality)
+- [Consumption](#consumption)
+- [Repository Structure](#repository-structure)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [Environment](#environment)
+- [Testing](#testing)
+- [Dashboard](#dashboard)
+- [Roadmap](#roadmap)
+
+## Problem Statement
+
+Infrabel publishes raw punctuality records for every train at every measuring point on the Belgian network. The public traveller portal answers *"is my train late right now?"*. This project answers a different question for a different audience — network and operations planners looking at history: **where, when and on which relations does delay originate, and does it grow or recover along the route?**
+
+The Gold model is designed to answer questions such as:
+
+- Which measuring points concentrate late arrivals, and is that pattern stable across months?
+- How does punctuality vary by hour of day and between weekdays and weekends?
+- Which relations and operators under-perform once results are weighted by traffic volume?
+- Where do trains lose or recover time while stopped (`dwell_delta_s`)?
+
+The data was not prepared for analysis. The two exports differ in delimiter, date format and station identifier; the daily file is overwritten upstream every morning; station names carry inconsistent accents and spacing. Most of the engineering in this repository exists to absorb those properties explicitly rather than hide them.
+
 ## Architecture
 
 ```mermaid
@@ -82,52 +116,6 @@ flowchart LR
 ```
 
 Solid edges are the scheduled path; dotted edges are ad-hoc loads or observations about the data. Edge labels reference the notebook that performs the step. `dim_date` is a generated calendar with no upstream dependency.
-
-## Table of Contents
-
-- [Problem Statement](#problem-statement)
-- [Project at a Glance](#project-at-a-glance)
-- [Data Sources](#data-sources)
-- [Key Design Decisions](#key-design-decisions)
-- [Schema Governance](#schema-governance)
-- [Data Model](#data-model)
-- [Pipeline Orchestration](#pipeline-orchestration)
-- [Data Quality](#data-quality)
-- [Consumption](#consumption)
-- [Repository Structure](#repository-structure)
-- [Tech Stack](#tech-stack)
-- [Getting Started](#getting-started)
-- [Environment](#environment)
-- [Testing](#testing)
-- [Dashboard](#dashboard)
-- [Roadmap](#roadmap)
-
-## Problem Statement
-
-Infrabel publishes raw punctuality records for every train at every measuring point on the Belgian network. The public traveller portal answers *"is my train late right now?"*. This project answers a different question for a different audience — network and operations planners looking at history: **where, when and on which relations does delay originate, and does it grow or recover along the route?**
-
-The Gold model is designed to answer questions such as:
-
-- Which measuring points concentrate late arrivals, and is that pattern stable across months?
-- How does punctuality vary by hour of day and between weekdays and weekends?
-- Which relations and operators under-perform once results are weighted by traffic volume?
-- Where do trains lose or recover time while stopped (`dwell_delta_s`)?
-
-The data was not prepared for analysis. The two exports differ in delimiter, date format and station identifier; the daily file is overwritten upstream every morning; station names carry inconsistent accents and spacing. Most of the engineering in this repository exists to absorb those properties explicitly rather than hide them.
-
-## Project at a Glance
-
-| | |
-|---|---|
-| **Data** | Infrabel raw punctuality — one row per train per measuring point per service date |
-| **History loaded** | January 2024 onward — monthly backfill for closed months, daily feed for the current one |
-| **Volume** | ~61M rows in `gold.fact_stop_event`, across 701 measuring points — 559 of them passenger stations — and 566 relations; ~2M rows / ~300 MB per monthly file; ~75k rows per weekday and ~45k per weekend day from the daily feed |
-| **Cadence** | Daily at 07:00 Europe/Brussels; monthly backfill on demand, one year per run |
-| **Daily runtime** | ~3 minutes end to end |
-| **Compute** | Databricks Free Edition — serverless jobs compute and a SQL Warehouse |
-| **Deployment** | Databricks Asset Bundles; job definition versioned in Git |
-| **Consumers** | Power BI (Import); date-partitioned Parquet export for [rail-punctuality-rag](https://github.com/BeatrizJover/rail-punctuality-rag) |
-| **Quality gates** | 32 pytest unit tests and ruff on every push (GitHub Actions); 6 data quality rules per scheduled run |
 
 ## Data Sources
 
