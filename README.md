@@ -233,7 +233,7 @@ A monthly row always overwrites; a daily row overwrites only another daily row. 
 
 ### Scheduled job
 
-The job runs daily at **07:00 Europe/Brussels** on serverless compute (Databricks Free Edition). Its entire definition lives in `resources/rail_punctuality_daily.job.yml` and is deployed via Databricks Asset Bundles: configuration changes go through Git and `bundle deploy`, never through manual edits in the workspace.
+The job runs daily at **10:00 Europe/Brussels** on serverless compute (Databricks Free Edition). Its entire definition lives in `resources/rail_punctuality_daily.job.yml` and is deployed via Databricks Asset Bundles: configuration changes go through Git and `bundle deploy`, never through manual edits in the workspace.
 
 ```mermaid
 flowchart LR
@@ -258,7 +258,7 @@ Failure notifications are configured at the **job level**, so every task is cove
 
 Three changes close the gap, and the bug drove all three:
 
-- the schedule moved to **07:00**, after the observed refresh;
+- the schedule moved to **10:00**, after the observed refresh;
 - `validate_d1_export()` in `src/rail/ingest.py` compares the payload's own `DATDEP` against the expected service date and raises `StaleExportError` before anything is written, so the retry policy waits for a late publication instead of ingesting stale data;
 - landed files carry the fetch timestamp (`YYYY-MM-DD_YYYYMMDDTHHMMSSZ.csv`), because Auto Loader skips a path it has already processed and a retry writing to the same name would never be ingested.
 
