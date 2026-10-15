@@ -419,7 +419,7 @@ databricks bundle deploy   -t prod
 
 Workspace setup:
 
-1. Run `notebooks/00_setup.sql` once to create the catalog, schemas, and volumes before the first job execution.
+1. Run `notebooks/00_setup.sql` once with the parameter `catalog = rail_punctuality` to create the catalog, schemas, and volumes before the first job execution.
 2. Set `warehouse_id` in `resources/rail_punctuality_daily.job.yml` to a SQL Warehouse in your workspace — the Gold task runs there.
 3. *(Optional)* Load history with the [backfill path](#backfill-and-publishing-ad-hoc), one year at a time.
 4. *(Optional)* Create the export volume listed in the header of `92b_export_gold_local.py` before publishing Gold.
@@ -479,7 +479,7 @@ The stop-event count on the page reads lower than the ~61M rows in `fact_stop_ev
 | **Backfill** | Replace configuration constants in `90` and `01b` with validated widgets | ⏳ Pending | Low |
 | **Publishing** | Date-partitioned Gold Parquet export with coverage manifest | ✅ Done | — |
 | **Publishing** | Azure Blob transport (`92`) — implemented; storage account and secret scope not configured | ⏳ Pending | Low |
-| **Platform** | Environment isolation — the catalog name is hard-coded in `config.py`, the SQL notebooks and several Python notebooks, and the bundle's `catalog` / `schema` variables are declared but not consumed, so `dev` and `prod` targets write to the same catalog | ⏳ Pending | Medium |
+| **Platform** | Environment isolation — the catalog name is hard-coded in `config.py`, the SQL notebooks and several Python notebooks, and the bundle's `catalog` / `schema` variables are declared but not consumed, so `dev` and `prod` targets write to the same catalog | ✅ Done | — |
 | **Platform** | CI: pytest and ruff on every push via GitHub Actions | ✅ Done | — |
 | **Analytics** | Power BI report — Network Health page | ✅ Done | — |
 | **Maintenance** | File compaction and retention (`OPTIMIZE`, `VACUUM`) — delegated to Databricks Predictive Optimization on Unity Catalog managed tables | ✅ Platform-managed | — |
