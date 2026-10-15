@@ -1,11 +1,13 @@
 -- Initializes Unity Catalog objects: catalogs, schemas, and the landing volume
-CREATE CATALOG IF NOT EXISTS rail_punctuality;
+CREATE CATALOG IF NOT EXISTS IDENTIFIER(:catalog);
 
-CREATE SCHEMA IF NOT EXISTS rail_punctuality.bronze;
-CREATE SCHEMA IF NOT EXISTS rail_punctuality.silver;
-CREATE SCHEMA IF NOT EXISTS rail_punctuality.gold;
-CREATE SCHEMA IF NOT EXISTS rail_punctuality.ops;
+USE CATALOG IDENTIFIER(:catalog);
 
-CREATE VOLUME IF NOT EXISTS rail_punctuality.bronze.landing;
+CREATE SCHEMA IF NOT EXISTS bronze;
+CREATE SCHEMA IF NOT EXISTS silver;
+CREATE SCHEMA IF NOT EXISTS gold;
+CREATE SCHEMA IF NOT EXISTS ops;
 
-CREATE VOLUME IF NOT EXISTS rail_punctuality.bronze.checkpoints;
+CREATE VOLUME IF NOT EXISTS bronze.landing;
+
+CREATE VOLUME IF NOT EXISTS bronze.checkpoints;
