@@ -8,7 +8,7 @@ if REPO_ROOT not in sys.path:
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from src.rail.config import BRONZE_STATION_REF
+from src.rail.config import BRONZE_STATION_REF, LANDING
 from src.rail.transforms import normalize_station_name
 
 # Target execution parameters
@@ -16,7 +16,7 @@ YEAR = "2026"
 MONTH = "07"  # zero-padded
 
 SOURCE_PATH = (
-    f"/Volumes/rail_punctuality/bronze/landing/monthly/"
+    f"{LANDING}/monthly/"
     f"Data_raw_punctuality_{YEAR}{MONTH}.csv"
 )
 

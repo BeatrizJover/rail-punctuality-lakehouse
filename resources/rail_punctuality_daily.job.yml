@@ -20,6 +20,9 @@ resources:
           run_if: ALL_SUCCESS
           spark_python_task:
             python_file: ../notebooks/01_bronze_ingest.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
           timeout_seconds: 0
           webhook_notifications: {}
         - task_key: silver_transform
@@ -34,6 +37,9 @@ resources:
           run_if: ALL_SUCCESS
           spark_python_task:
             python_file: ../notebooks/02_silver_transform.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
           timeout_seconds: 0
           webhook_notifications: {}
         - task_key: data_quality
@@ -44,6 +50,9 @@ resources:
           run_if: ALL_SUCCESS
           spark_python_task:
             python_file: ../notebooks/04_data_quality.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
           timeout_seconds: 0
           webhook_notifications: {}
         - task_key: gold_star_schema
@@ -60,6 +69,7 @@ resources:
               source: WORKSPACE
             parameters:
               service_date: "{{tasks.silver_transform.values.service_date}}"
+              catalog: ${var.catalog}
             warehouse_id: fda98af86a6bbad9
           timeout_seconds: 0
           webhook_notifications: {}
@@ -74,6 +84,9 @@ resources:
           run_if: ALL_SUCCESS
           spark_python_task:
             python_file: ../notebooks/03b_gold_station_enrichment.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
           timeout_seconds: 0
           webhook_notifications: {}
       environments:

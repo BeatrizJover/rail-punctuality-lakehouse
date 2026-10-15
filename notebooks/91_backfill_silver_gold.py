@@ -19,7 +19,7 @@ import re
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from src.rail.config import BRONZE_RAW_MONTHLY, SILVER_STOP, PUNCTUAL_THRESHOLD_S
+from src.rail.config import BRONZE_RAW_MONTHLY, GOLD, SILVER, SILVER_STOP, PUNCTUAL_THRESHOLD_S
 from src.rail.transforms import typed_stop_events, deduplicate_stop_events
 from src.rail.gold_maintenance import refresh_station_enrichment
 
@@ -82,7 +82,7 @@ for ym in months:
 
 # Merge the year's Silver events into the Gold fact table, one year at a time.
 spark.sql(f"""
-MERGE INTO rail_punctuality.gold.fact_stop_event t
+MERGE INTO {GOLD}.fact_stop_event t
 USING (
     SELECT
         s.service_date   AS date_key,
@@ -95,7 +95,7 @@ USING (
         s.dwell_delta_s,
         CAST(s.is_punctual_arr AS INT) AS punctual_arrivals,
         1                              AS stop_events
-    FROM rail_punctuality.silver.stop_event s
+    FROM {SILVER}.stop_event s
     WHERE s.service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
 ) s
 ON  t.date_key BETWEEN DATE'{year_start}' AND DATE'{year_end}'
@@ -112,7 +112,7 @@ print(f"gold fact merged for {year}")
 
 # Maintain Gold dimensions incrementally over the backfilled year range.
 spark.sql(f"""
-MERGE INTO rail_punctuality.gold.dim_station t
+MERGE INTO {GOLD}.dim_station t
 USING (
     SELECT
         stop_point_key       AS station_key,
@@ -120,7 +120,7 @@ USING (
         max(ptcar_no)        AS ptcar_no,
         min(service_date)    AS first_seen,
         max(service_date)    AS last_seen
-    FROM rail_punctuality.silver.stop_event
+    FROM {SILVER}.stop_event
     WHERE service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
     GROUP BY stop_point_key
 ) s
@@ -140,14 +140,14 @@ WHEN NOT MATCHED THEN INSERT (station_key, station_name, ptcar_no, first_seen, l
 refresh_station_enrichment(spark)
 
 spark.sql(f"""
-MERGE INTO rail_punctuality.gold.dim_relation t
+MERGE INTO {GOLD}.dim_relation t
 USING (
     SELECT DISTINCT
         md5(concat_ws('|', relation, relation_direction, operator)) AS relation_key,
         relation,
         relation_direction,
         operator
-    FROM rail_punctuality.silver.stop_event
+    FROM {SILVER}.stop_event
     WHERE service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
 ) s
 ON t.relation_key = s.relation_key

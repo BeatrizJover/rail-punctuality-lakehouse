@@ -1,6 +1,17 @@
 # Configuration for the rail punctuality lakehouse.
 
-CATALOG = "rail_punctuality"
+import argparse
+import sys
+
+
+def _resolve_catalog(argv):
+    # Jobs pass --catalog via the bundle; everything else in argv is ignored.
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--catalog", default="rail_punctuality")
+    return parser.parse_known_args(argv[1:])[0].catalog
+
+
+CATALOG = _resolve_catalog(sys.argv)
 
 BRONZE = f"{CATALOG}.bronze"
 SILVER = f"{CATALOG}.silver"

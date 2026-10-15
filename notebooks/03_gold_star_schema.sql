@@ -3,11 +3,13 @@
 -- supplied by the upstream silver_transform task value. No statement in this
 -- file scans Silver in full, so daily runtime stays flat as history grows.
 
+USE CATALOG IDENTIFIER(:catalog);
+
 DECLARE OR REPLACE VARIABLE run_service_date DATE;
 SET VARIABLE run_service_date = CAST(:service_date AS DATE);
 
 -- dim_date -------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_date AS
+CREATE TABLE IF NOT EXISTS gold.dim_date AS
 SELECT
     d                        AS date_key,
     year(d)                  AS year,
@@ -21,7 +23,7 @@ SELECT
 FROM (SELECT explode(sequence(DATE'2014-01-01', DATE'2027-12-31', INTERVAL 1 DAY)) AS d);
 
 -- dim_station ----------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_station (
+CREATE TABLE IF NOT EXISTS gold.dim_station (
     station_key  STRING,
     station_name STRING,
     ptcar_no     INT,
@@ -34,10 +36,10 @@ CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_station (
 )
 USING DELTA;
 
-COMMENT ON TABLE rail_punctuality.gold.dim_station IS
+COMMENT ON TABLE gold.dim_station IS
   'One row per measuring point. first_seen and last_seen are idempotent accumulators, so reruns and out-of-order historical backfills converge to the same result.';
 
-MERGE INTO rail_punctuality.gold.dim_station t
+MERGE INTO gold.dim_station t
 USING (
     SELECT
         stop_point_key       AS station_key,
@@ -45,7 +47,7 @@ USING (
         max(ptcar_no)        AS ptcar_no,
         min(service_date)    AS first_seen,
         max(service_date)    AS last_seen
-    FROM rail_punctuality.silver.stop_event
+    FROM silver.stop_event
     WHERE service_date = run_service_date
     GROUP BY stop_point_key
 ) s
@@ -59,7 +61,7 @@ WHEN NOT MATCHED THEN INSERT (station_key, station_name, ptcar_no, first_seen, l
     VALUES (s.station_key, s.station_name, s.ptcar_no, s.first_seen, s.last_seen);
 
 -- dim_relation ---------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_relation (
+CREATE TABLE IF NOT EXISTS gold.dim_relation (
     relation_key       STRING,
     relation           STRING,
     relation_direction STRING,
@@ -68,21 +70,21 @@ CREATE TABLE IF NOT EXISTS rail_punctuality.gold.dim_relation (
 USING DELTA;
 
 -- relation_key is the MD5 of the three attributes the row carries, so a matched row can never differ from its source. 
-MERGE INTO rail_punctuality.gold.dim_relation t
+MERGE INTO gold.dim_relation t
 USING (
     SELECT DISTINCT
         md5(concat_ws('|', relation, relation_direction, operator)) AS relation_key,
         relation,
         relation_direction,
         operator
-    FROM rail_punctuality.silver.stop_event
+    FROM silver.stop_event
     WHERE service_date = run_service_date
 ) s
 ON t.relation_key = s.relation_key
 WHEN NOT MATCHED THEN INSERT *;
 
 -- fact_stop_event ------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS rail_punctuality.gold.fact_stop_event (
+CREATE TABLE IF NOT EXISTS gold.fact_stop_event (
     date_key          DATE,
     station_key       STRING,
     relation_key      STRING,
@@ -97,10 +99,10 @@ CREATE TABLE IF NOT EXISTS rail_punctuality.gold.fact_stop_event (
 USING DELTA
 CLUSTER BY (date_key, station_key);
 
-COMMENT ON TABLE rail_punctuality.gold.fact_stop_event IS
+COMMENT ON TABLE gold.fact_stop_event IS
   'Grain: one train passing one measuring point on one service date. Additive measures: stop_events, punctual_arrivals.';
 
-MERGE INTO rail_punctuality.gold.fact_stop_event t
+MERGE INTO gold.fact_stop_event t
 USING (
     SELECT
         s.service_date   AS date_key,
@@ -113,7 +115,7 @@ USING (
         s.dwell_delta_s,
         CAST(s.is_punctual_arr AS INT) AS punctual_arrivals,
         1                              AS stop_events
-    FROM rail_punctuality.silver.stop_event s
+    FROM silver.stop_event s
     WHERE s.service_date = run_service_date
 ) s
 ON  t.date_key    = run_service_date

@@ -18,8 +18,6 @@ sync:
 variables:
   catalog:
     description: The catalog to use
-  schema:
-    description: The schema to use
 
 targets:
   dev:
@@ -32,8 +30,7 @@ targets:
     workspace:
       host: https://dbc-06d3fa86-a021.cloud.databricks.com
     variables:
-      catalog: rail_punctuality_project
-      schema: ${workspace.current_user.short_name}
+      catalog: rail_punctuality_dev
     resources:
       jobs:
         rail_punctuality_daily:
@@ -47,8 +44,7 @@ targets:
       host: https://dbc-06d3fa86-a021.cloud.databricks.com      
       root_path: /Workspace/Users/beatrizcruzjover@gmail.com/.bundle/${bundle.name}/${bundle.target}
     variables:
-      catalog: rail_punctuality_project
-      schema: prod
+      catalog: rail_punctuality
     permissions:
       - user_name: beatrizcruzjover@gmail.com
         level: CAN_MANAGE

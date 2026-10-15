@@ -17,12 +17,12 @@ drift apart.
 
 Prerequisite (run once):
 
-    CREATE VOLUME IF NOT EXISTS rail_punctuality.gold.export;
+    CREATE VOLUME IF NOT EXISTS <catalog>.gold.export;
 
 Download with the Databricks CLI:
 
     databricks fs cp -r \
-      dbfs:/Volumes/rail_punctuality/gold/export/gold ./gold
+      dbfs:/Volumes/<catalog>/gold/export/gold ./gold
 
 Idempotency: the fact is written with dynamic partition overwrite, so re-exporting
 a range rewrites only the affected date partitions. Dimensions are overwritten whole.
@@ -43,7 +43,7 @@ import re
 
 from pyspark.sql import functions as F
 
-from src.rail.config import GOLD
+from src.rail.config import CATALOG, GOLD
 
 # Gold table identifiers, derived from the catalog schema declared in config.
 GOLD_FACT = f"{GOLD}.fact_stop_event"
@@ -65,7 +65,7 @@ dbutils.widgets.text("start_year", "2024", "Start year (YYYY)")
 dbutils.widgets.text("end_year", "2026", "End year (YYYY)")
 dbutils.widgets.text(
     "export_root",
-    "/Volumes/rail_punctuality/gold/export",
+    f"/Volumes/{CATALOG}/gold/export",
     "Export root (Volume path)",
 )
 
