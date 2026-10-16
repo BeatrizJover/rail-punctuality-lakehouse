@@ -1,4 +1,3 @@
-# Databricks notebook source
 # Resolves the run's stop points to PTCAR_NO in silver.station_alias.
 # Shadow mode: nothing downstream reads the table yet.
 
