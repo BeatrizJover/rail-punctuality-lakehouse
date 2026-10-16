@@ -70,7 +70,7 @@ def resolve_station_aliases(
         F.max("service_date").alias("obs_last_seen"),
     )
 
-    # Daily rows carry crosswalk-enriched IDs; only monthly ones are evidence.
+    # Only monthly rows carry a native ID; older daily rows may hold crosswalk values.
     monthly = (
         observed.filter((F.col("source_feed") == "monthly") & F.col("ptcar_no").isNotNull())
         .select("stop_point_key", F.trunc("service_date", "month").alias("month"), "ptcar_no")
@@ -167,3 +167,48 @@ def alias_changes(existing: DataFrame, resolved: DataFrame) -> DataFrame:
             ],
         )
     )
+
+
+UNRESOLVED_STATION_KEY = -1
+
+
+def build_station_dimension(aliases: DataFrame, operational_points: DataFrame) -> DataFrame:
+    """Core dim_station rows keyed on PTCAR_NO, plus the unresolved member.
+
+    One row per PTCAR_NO with a resolved alias. first_seen/last_seen are
+    recomputed from the aliases rather than accumulated, so a corrected alias
+    shrinks the range of the station it no longer points to. station_name is
+    the official longnamedutch when the ID is in the reference, otherwise the
+    name of the most recently seen alias.
+    Returns station_key, station_name, ptcar_no, first_seen, last_seen.
+    """
+    by_station = (
+        aliases.filter(F.col("status") == "resolved")
+        .groupBy("ptcar_no")
+        .agg(
+            F.min("first_seen").alias("first_seen"),
+            F.max("last_seen").alias("last_seen"),
+            F.max_by("stop_point_name", F.struct("last_seen", "stop_point_name")).alias("alias_name"),
+        )
+    )
+    official = (
+        operational_points.select(
+            F.expr("try_cast(ptcarid AS INT)").alias("ptcar_no"),
+            F.trim("longnamedutch").alias("official_name"),
+        )
+        .filter(F.col("ptcar_no").isNotNull() & (F.col("official_name") != ""))
+        .groupBy("ptcar_no")
+        .agg(F.max("official_name").alias("official_name"))
+    )
+    stations = by_station.join(official, "ptcar_no", "left").select(
+        F.col("ptcar_no").alias("station_key"),
+        F.coalesce("official_name", "alias_name").alias("station_name"),
+        "ptcar_no",
+        "first_seen",
+        "last_seen",
+    )
+    unresolved = stations.sparkSession.createDataFrame(
+        [(UNRESOLVED_STATION_KEY, "Unresolved", None, None, None)],
+        "station_key INT, station_name STRING, ptcar_no INT, first_seen DATE, last_seen DATE",
+    )
+    return stations.unionByName(unresolved)

@@ -1,5 +1,5 @@
 # Resolves the run's stop points to PTCAR_NO in silver.station_alias.
-# Shadow mode: nothing downstream reads the table yet.
+# gold_star_schema reads it to key the fact on PTCAR_NO.
 
 # COMMAND ----------
 

@@ -22,44 +22,6 @@ SELECT
     dayofweek(d) IN (1, 7)   AS is_weekend
 FROM (SELECT explode(sequence(DATE'2014-01-01', DATE'2027-12-31', INTERVAL 1 DAY)) AS d);
 
--- dim_station ----------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gold.dim_station (
-    station_key  STRING,
-    station_name STRING,
-    ptcar_no     INT,
-    first_seen   DATE,
-    last_seen    DATE,
-    station_type STRING,
-    is_passenger BOOLEAN,
-    latitude     DOUBLE,
-    longitude    DOUBLE
-)
-USING DELTA;
-
-COMMENT ON TABLE gold.dim_station IS
-  'One row per measuring point. first_seen and last_seen are idempotent accumulators, so reruns and out-of-order historical backfills converge to the same result.';
-
-MERGE INTO gold.dim_station t
-USING (
-    SELECT
-        stop_point_key       AS station_key,
-        max(stop_point_name) AS station_name,
-        max(ptcar_no)        AS ptcar_no,
-        min(service_date)    AS first_seen,
-        max(service_date)    AS last_seen
-    FROM silver.stop_event
-    WHERE service_date = run_service_date
-    GROUP BY stop_point_key
-) s
-ON t.station_key = s.station_key
-WHEN MATCHED THEN UPDATE SET
-    t.station_name = coalesce(s.station_name, t.station_name),
-    t.ptcar_no     = coalesce(s.ptcar_no, t.ptcar_no),
-    t.first_seen   = least(t.first_seen, s.first_seen),
-    t.last_seen    = greatest(t.last_seen, s.last_seen)
-WHEN NOT MATCHED THEN INSERT (station_key, station_name, ptcar_no, first_seen, last_seen)
-    VALUES (s.station_key, s.station_name, s.ptcar_no, s.first_seen, s.last_seen);
-
 -- dim_relation ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS gold.dim_relation (
     relation_key       STRING,
@@ -86,7 +48,7 @@ WHEN NOT MATCHED THEN INSERT *;
 -- fact_stop_event ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS gold.fact_stop_event (
     date_key          DATE,
-    station_key       STRING,
+    station_key       INT,
     stop_point_key    STRING,
     relation_key      STRING,
     train_no          INT,
@@ -107,7 +69,7 @@ MERGE INTO gold.fact_stop_event t
 USING (
     SELECT
         s.service_date   AS date_key,
-        s.stop_point_key AS station_key,
+        coalesce(a.ptcar_no, -1) AS station_key,
         s.stop_point_key,
         md5(concat_ws('|', s.relation, s.relation_direction, s.operator)) AS relation_key,
         s.train_no,
@@ -118,6 +80,8 @@ USING (
         CAST(s.is_punctual_arr AS INT) AS punctual_arrivals,
         1                              AS stop_events
     FROM silver.stop_event s
+    LEFT JOIN silver.station_alias a
+      ON a.stop_point_key = s.stop_point_key AND a.status = 'resolved'
     WHERE s.service_date = run_service_date
 ) s
 ON  t.date_key    = run_service_date

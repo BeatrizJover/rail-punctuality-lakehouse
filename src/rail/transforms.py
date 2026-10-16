@@ -75,8 +75,8 @@ def typed_stop_events(
     monthly feed win over the daily feed on overlapping service dates.
 
     with_native_ptcar reads PTCAR_NO directly from the row. Only the monthly
-    export carries it; the daily feed leaves it NULL and relies on the
-    station_ref left-join downstream.
+    export carries it; the daily feed leaves it NULL, and station identity
+    is resolved in silver.station_alias.
     """
     name_key = normalize_station_name("PTCAR_LG_NM_NL")
 

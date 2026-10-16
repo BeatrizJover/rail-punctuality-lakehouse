@@ -11,7 +11,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from src.rail.config import (
-    BRONZE_LOOKBACK_DAYS, BRONZE_RAW, BRONZE_STATION_REF, SILVER_STOP, PUNCTUAL_THRESHOLD_S,
+    BRONZE_LOOKBACK_DAYS, BRONZE_RAW, SILVER_STOP, PUNCTUAL_THRESHOLD_S,
 )
 from src.rail.transforms import (
     deduplicate_stop_events, has_processing_gap, typed_stop_events, within_lookback,
@@ -53,7 +53,7 @@ COMMENT ON TABLE {SILVER_STOP} IS
   'Grain: one train passing one measuring point per service date. Delays in seconds.'
 """)
 
-# Transform raw stop events and enrich ptcar_no from the station reference.
+# Transform raw stop events.
 bronze_window = within_lookback(spark.table(BRONZE_RAW), BRONZE_LOOKBACK_DAYS)
 
 # Fail before the MERGE if Bronze rows ingested since the last Silver run fall
@@ -81,18 +81,8 @@ if window_empty or has_processing_gap(watermark, window_start):
 
 d1_typed = typed_stop_events(bronze_window, PUNCTUAL_THRESHOLD_S)
 
-station_ref = spark.table(BRONZE_STATION_REF).select(
-    "stop_point_name_key",
-    F.col("ptcar_no").alias("ref_ptcar_no"),
-)
-
-enriched = (
-    d1_typed.join(station_ref, on="stop_point_name_key", how="left")
-    .withColumn("ptcar_no", F.coalesce("ptcar_no", "ref_ptcar_no"))
-    .drop("ref_ptcar_no")
-)
-
-silver = deduplicate_stop_events(enriched)
+# Daily rows keep ptcar_no NULL; station identity is resolved in silver.station_alias.
+silver = deduplicate_stop_events(d1_typed)
 
 min_service_date, max_service_date = silver.agg(
     F.min("service_date"), F.max("service_date")

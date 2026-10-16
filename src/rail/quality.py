@@ -10,8 +10,9 @@ SILVER_CHECKS = [
     ("unknown_station",      "stop_point_name IS NULL OR stop_point_name = ''")    
 ]
 
-SILVER_COVERAGE = [
-    ("ptcar_no_coverage", "ptcar_no IS NULL"),
+# Share of the run's fact rows not yet resolved to a PTCAR_NO. A metric, not an alert.
+GOLD_COVERAGE = [
+    ("unresolved_station_key", "station_key = -1"),
 ]
 
 BRONZE_CHECKS = [

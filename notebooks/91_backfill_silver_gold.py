@@ -19,9 +19,13 @@ import re
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from src.rail.config import BRONZE_RAW_MONTHLY, GOLD, SILVER, SILVER_STOP, PUNCTUAL_THRESHOLD_S
+from src.rail.config import (
+    BRONZE_RAW_MONTHLY, GOLD, SILVER, SILVER_STATION_ALIAS, SILVER_STOP, PUNCTUAL_THRESHOLD_S,
+)
 from src.rail.transforms import typed_stop_events, deduplicate_stop_events
-from src.rail.gold_maintenance import refresh_station_enrichment
+from src.rail.gold_maintenance import (
+    refresh_station_dimension, refresh_station_enrichment, repair_fact_station_keys,
+)
 from src.rail.silver_maintenance import refresh_station_aliases
 
 # COMMAND ----------
@@ -95,7 +99,7 @@ MERGE INTO {GOLD}.fact_stop_event t
 USING (
     SELECT
         s.service_date   AS date_key,
-        s.stop_point_key AS station_key,
+        coalesce(a.ptcar_no, -1) AS station_key,
         s.stop_point_key,
         md5(concat_ws('|', s.relation, s.relation_direction, s.operator)) AS relation_key,
         s.train_no,
@@ -106,6 +110,8 @@ USING (
         CAST(s.is_punctual_arr AS INT) AS punctual_arrivals,
         1                              AS stop_events
     FROM {SILVER}.stop_event s
+    LEFT JOIN {SILVER_STATION_ALIAS} a
+      ON a.stop_point_key = s.stop_point_key AND a.status = 'resolved'
     WHERE s.service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
 ) s
 ON  t.date_key BETWEEN DATE'{year_start}' AND DATE'{year_end}'
@@ -120,33 +126,10 @@ print(f"gold fact merged for {year}")
 
 # COMMAND ----------
 
-# Maintain Gold dimensions incrementally over the backfilled year range.
-spark.sql(f"""
-MERGE INTO {GOLD}.dim_station t
-USING (
-    SELECT
-        stop_point_key       AS station_key,
-        max(stop_point_name) AS station_name,
-        max(ptcar_no)        AS ptcar_no,
-        min(service_date)    AS first_seen,
-        max(service_date)    AS last_seen
-    FROM {SILVER}.stop_event
-    WHERE service_date BETWEEN DATE'{year_start}' AND DATE'{year_end}'
-    GROUP BY stop_point_key
-) s
-ON t.station_key = s.station_key
-WHEN MATCHED THEN UPDATE SET
-    t.station_name = coalesce(s.station_name, t.station_name),
-    t.ptcar_no     = coalesce(s.ptcar_no, t.ptcar_no),
-    t.first_seen   = least(t.first_seen, s.first_seen),
-    t.last_seen    = greatest(t.last_seen, s.last_seen)
-WHEN NOT MATCHED THEN INSERT (station_key, station_name, ptcar_no, first_seen, last_seen)
-    VALUES (s.station_key, s.station_name, s.ptcar_no, s.first_seen, s.last_seen)
-""")
-
-# Full-table refresh of station_type/is_passenger/latitude/longitude: the
-# MERGE above only touched this year's stations, so classification for the
-# rest of the table (and any reclassification) still needs this pass.
+# Station dimension follows the aliases, then facts whose alias changed are
+# re-pointed before the enrichment pass.
+refresh_station_dimension(spark)
+repair_fact_station_keys(spark)
 refresh_station_enrichment(spark)
 
 spark.sql(f"""

@@ -2,10 +2,9 @@
 # Downloads the Infrabel operational points reference and lands it in Bronze.
 # Ad-hoc, quarterly: run by hand when Infrabel republishes the dataset.
 #
-# Write semantics: overwrite, not MERGE. `01b` merges because it accumulates a
-# crosswalk across successive monthly exports. This dataset is different: each
-# publication is a full, authoritative snapshot of the network's operational
-# points, including retirements. A MERGE would keep retired points forever --
+# Write semantics: overwrite, not MERGE. Each publication is a full,
+# authoritative snapshot of the network's operational points, including
+# retirements. A MERGE would keep retired points forever --
 # the stale-mapping-table failure this design exists to avoid. History lives at
 # the file level in the landing volume instead: each snapshot is landed under
 # its retrieval date, so overwriting the table loses nothing.

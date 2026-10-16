@@ -3,7 +3,8 @@
 import datetime as dt
 
 from src.rail.identity import (
-    STATION_ALIAS_SCHEMA, alias_changes, alias_upserts, resolve_station_aliases,
+    STATION_ALIAS_SCHEMA, UNRESOLVED_STATION_KEY,
+    alias_changes, alias_upserts, build_station_dimension, resolve_station_aliases,
 )
 
 OBSERVED_SCHEMA = (
@@ -150,3 +151,32 @@ def test_change_rows_only_for_real_changes(spark):
     assert (change.old_resolution_source, change.new_resolution_source) == (
         "operational_point_name", "monthly_native",
     )
+
+
+def alias(key, name, ptcar_no, status, first_seen, last_seen):
+    return (
+        key, name, name, ptcar_no, status, None, None,
+        dt.date.fromisoformat(first_seen), dt.date.fromisoformat(last_seen), None,
+    )
+
+
+def test_station_dimension_unites_renamed_aliases_under_one_ptcar_no(spark):
+    aliases = spark.createDataFrame(
+        [
+            alias("k1", "OLD NAME", 100, "resolved", "2024-01-01", "2025-06-30"),
+            alias("k2", "NEW NAME", 100, "resolved", "2025-07-01", "2026-08-01"),
+            alias("k3", "OTHER", 200, "resolved", "2024-01-01", "2026-08-01"),
+            alias("k4", "LOST", None, "unresolved", "2023-01-01", "2026-08-01"),
+            alias("k5", "BOTH", None, "ambiguous", "2023-01-01", "2026-08-01"),
+        ],
+        STATION_ALIAS_SCHEMA,
+    )
+    reference = spark.createDataFrame([("200", "Official Other ")], REFERENCE_SCHEMA)
+
+    rows = {r.station_key: r for r in build_station_dimension(aliases, reference).collect()}
+
+    assert set(rows) == {100, 200, UNRESOLVED_STATION_KEY}
+    assert rows[100].station_name == "NEW NAME"          # latest alias, not in reference
+    assert (rows[100].first_seen, rows[100].last_seen) == (dt.date(2024, 1, 1), dt.date(2026, 8, 1))
+    assert rows[200].station_name == "Official Other"    # official name wins
+    assert rows[UNRESOLVED_STATION_KEY].ptcar_no is None

@@ -22,7 +22,6 @@ LANDING     = f"/Volumes/{CATALOG}/bronze/landing"
 CHECKPOINTS = f"/Volumes/{CATALOG}/bronze/checkpoints"
 
 BRONZE_RAW  = f"{BRONZE}.punctuality_raw"
-BRONZE_STATION_REF = f"{BRONZE}.station_ref"
 SILVER_STOP = f"{SILVER}.stop_event"
 SILVER_STATION_ALIAS = f"{SILVER}.station_alias"
 SILVER_STATION_ALIAS_CHANGES = f"{SILVER}.station_alias_changes"
@@ -50,6 +49,7 @@ OPERATIONAL_POINT_LANDING = f"{LANDING}/reference"
 BRONZE_OPERATIONAL_POINT = f"{BRONZE}.operational_point"
 
 GOLD_DIM_STATION = f"{GOLD}.dim_station"
+GOLD_FACT = f"{GOLD}.fact_stop_event"
 
 # CC0-licensed NMBS/SNCB station list, used to derive is_passenger: Infrabel's
 # class_en = 'Station' also includes yards and freight points this list omits.

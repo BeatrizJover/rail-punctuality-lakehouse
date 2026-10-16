@@ -30,7 +30,6 @@ def test_default_resolution_matches_prod_literals(reload_config):
     assert cfg.MONTHLY_LANDING == "/Volumes/rail_punctuality/bronze/landing/monthly"
     assert cfg.OPERATIONAL_POINT_LANDING == "/Volumes/rail_punctuality/bronze/landing/reference"
     assert cfg.BRONZE_RAW == "rail_punctuality.bronze.punctuality_raw"
-    assert cfg.BRONZE_STATION_REF == "rail_punctuality.bronze.station_ref"
     assert cfg.BRONZE_RAW_MONTHLY == "rail_punctuality.bronze.punctuality_raw_monthly"
     assert cfg.BRONZE_OPERATIONAL_POINT == "rail_punctuality.bronze.operational_point"
     assert cfg.BRONZE_IRAIL_STATION == "rail_punctuality.bronze.irail_station"
