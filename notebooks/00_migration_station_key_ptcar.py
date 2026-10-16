@@ -62,19 +62,7 @@ print(f"before: {before}")
 
 if station_key_is_string(GOLD_FACT):
     spark.sql(f"""
-    CREATE OR REPLACE TABLE {GOLD_FACT} (
-        date_key          DATE,
-        station_key       INT,
-        stop_point_key    STRING,
-        relation_key      STRING,
-        train_no          INT,
-        planned_hour      INT,
-        delay_arr_s       INT,
-        delay_dep_s       INT,
-        dwell_delta_s     INT,
-        punctual_arrivals INT,
-        stop_events       INT
-    )
+    CREATE OR REPLACE TABLE {GOLD_FACT}
     USING DELTA
     CLUSTER BY (date_key, station_key)
     COMMENT 'Grain: one train passing one measuring point on one service date. Additive measures: stop_events, punctual_arrivals.'
