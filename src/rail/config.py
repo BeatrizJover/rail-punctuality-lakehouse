@@ -24,6 +24,8 @@ CHECKPOINTS = f"/Volumes/{CATALOG}/bronze/checkpoints"
 BRONZE_RAW  = f"{BRONZE}.punctuality_raw"
 BRONZE_STATION_REF = f"{BRONZE}.station_ref"
 SILVER_STOP = f"{SILVER}.stop_event"
+SILVER_STATION_ALIAS = f"{SILVER}.station_alias"
+SILVER_STATION_ALIAS_CHANGES = f"{SILVER}.station_alias_changes"
 DQ_RESULTS  = f"{OPS}.dq_results"
 
 ODS_BASE        = "https://opendata.infrabel.be/api/explore/v2.1/catalog/datasets"
@@ -67,3 +69,6 @@ SERVICE_INFRA_TOKENS = (
 
 # Infrabel definition: a train is punctual below 6 minutes (max 5 min 59 s)
 PUNCTUAL_THRESHOLD_S = 360
+
+# Days of Bronze re-read by the daily Silver run; covers retries and late reruns.
+BRONZE_LOOKBACK_DAYS = 5

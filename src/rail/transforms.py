@@ -1,5 +1,7 @@
 # Silver layer transformations
 
+import datetime as dt
+
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
@@ -42,6 +44,25 @@ def station_match_key(col: str) -> Column:
     """
     return _match_key(F.col(col))
 
+def within_lookback(raw: DataFrame, lookback_days: int, as_of: Column | None = None) -> DataFrame:
+    """Keep Bronze rows ingested in the last `lookback_days` days.
+
+    Filters on _ingested_at rather than service_date so a late retry of an
+    older export is still picked up. `as_of` defaults to current_date().
+    """
+    as_of = F.current_date() if as_of is None else as_of
+    return raw.filter(F.col("_ingested_at") >= F.date_sub(as_of, lookback_days))
+
+def has_processing_gap(watermark: dt.datetime | None, window_start: dt.date) -> bool:
+    """True when Silver's last daily ingestion predates the Bronze window start.
+
+    Bronze rows ingested between the two are never read by the daily path.
+    No watermark means Silver holds no daily rows yet, which is not a gap.
+    """
+    if watermark is None:
+        return False
+    return watermark < dt.datetime.combine(window_start, dt.time.min)
+
 def typed_stop_events(
     raw: DataFrame,
     punctual_threshold_s: int = 360,
@@ -66,7 +87,9 @@ def typed_stop_events(
     ).alias("ptcar_no")
 
     return (
-        raw.select(
+        # An empty name would still hash to a non-null stop_point_key.
+        raw.filter(F.length(F.trim("PTCAR_LG_NM_NL")) > 0)
+        .select(
             F.to_date("DATDEP").alias("service_date"),
             F.col("TRAIN_NO").cast("int").alias("train_no"),
             F.trim("RELATION").alias("relation"),

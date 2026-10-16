@@ -1,17 +1,21 @@
 # Unit tests for the silver-layer transformations.
 
 from src.rail.transforms import (
-    typed_stop_events, deduplicate_stop_events, enrich_stations, station_match_key,
+    typed_stop_events, deduplicate_stop_events, enrich_stations, station_match_key, within_lookback,
+    has_processing_gap,
 )
 from conftest import RAW_SCHEMA
+import datetime as dt
+
+from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 from src.rail.transforms import (MONTHLY_DATE_COLUMNS, count_unparsed_dates, normalize_monthly_dates,)
 
-def raw_row(train_no="1234", delay_arr="120", ingested="2026-08-09 06:00:00"):
+def raw_row(train_no="1234", delay_arr="120", ingested="2026-08-09 06:00:00", station="Mechelen"):
     return (
         "2026-08-08", train_no, "BRUSSEL-MECHELEN", "A", "NMBS",
-        "5678", "Mechelen", "25", "25",
+        "5678", station, "25", "25",
         "2026-08-08", "08:10:00", "2026-08-08", "08:12:00",
         "2026-08-08", "08:12:00", "2026-08-08", "08:14:00",
         delay_arr, "100", ingested,
@@ -48,6 +52,44 @@ def test_dedup_keeps_the_latest_ingestion(spark):
 def test_rows_without_a_natural_key_are_dropped(spark):
     df = spark.createDataFrame([raw_row(train_no=None)], RAW_SCHEMA)
     assert typed_stop_events(df).count() == 0
+
+def test_rows_without_a_station_name_are_dropped(spark):
+    df = spark.createDataFrame(
+        [
+            raw_row(train_no="1", station=None),
+            raw_row(train_no="2", station=""),
+            raw_row(train_no="3", station="   "),
+            raw_row(train_no="4", station="Mechelen"),
+        ],
+        RAW_SCHEMA,
+    )
+    assert [r.train_no for r in typed_stop_events(df).collect()] == [4]
+
+def test_lookback_keeps_recent_rows_and_drops_older_ones(spark):
+    df = spark.createDataFrame(
+        [
+            raw_row(train_no="1", ingested="2026-08-09 06:00:00"),  # today
+            raw_row(train_no="2", ingested="2026-08-06 00:00:00"),  # window edge
+            raw_row(train_no="3", ingested="2026-08-05 23:59:59"),  # just outside
+        ],
+        RAW_SCHEMA,
+    )
+    as_of = F.to_date(F.lit("2026-08-09"))
+    kept = {r.TRAIN_NO for r in within_lookback(df, 3, as_of).collect()}
+    assert kept == {"1", "2"}
+
+WINDOW_START = dt.date(2026, 8, 5)
+
+def test_gap_not_flagged_when_watermark_is_inside_the_window():
+    assert not has_processing_gap(dt.datetime(2026, 8, 8, 6, 0), WINDOW_START)
+    assert not has_processing_gap(dt.datetime(2026, 8, 5, 0, 0), WINDOW_START)  # boundary
+
+def test_gap_flagged_when_watermark_is_before_the_window():
+    assert has_processing_gap(dt.datetime(2026, 8, 4, 23, 59, 59), WINDOW_START)
+
+def test_gap_not_flagged_without_a_watermark():
+    """First run: Silver holds no daily rows yet."""
+    assert not has_processing_gap(None, WINDOW_START)
 
 
 
