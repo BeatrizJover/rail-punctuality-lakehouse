@@ -22,6 +22,7 @@ from pyspark.sql import functions as F
 from src.rail.config import BRONZE_RAW_MONTHLY, GOLD, SILVER, SILVER_STOP, PUNCTUAL_THRESHOLD_S
 from src.rail.transforms import typed_stop_events, deduplicate_stop_events
 from src.rail.gold_maintenance import refresh_station_enrichment
+from src.rail.silver_maintenance import refresh_station_aliases
 
 # COMMAND ----------
 
@@ -77,6 +78,14 @@ for ym in months:
     )
 
     print(f"{ym}: merged into silver")
+
+# COMMAND ----------
+
+# Resolve the year's stop points against its monthly PTCAR_NO evidence.
+refresh_station_aliases(
+    spark,
+    spark.table(SILVER_STOP).filter(F.col("service_date").between(year_start, year_end)),
+)
 
 # COMMAND ----------
 

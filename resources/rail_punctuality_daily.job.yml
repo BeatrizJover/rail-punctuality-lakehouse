@@ -55,6 +55,22 @@ resources:
               - ${var.catalog}
           timeout_seconds: 0
           webhook_notifications: {}
+        - task_key: station_identity
+          depends_on:
+            - task_key: silver_transform
+          disabled: false
+          environment_key: Default
+          max_retries: 1
+          min_retry_interval_millis: 300000
+          retry_on_timeout: false
+          run_if: ALL_SUCCESS
+          spark_python_task:
+            python_file: ../notebooks/02b_silver_station_identity.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+          timeout_seconds: 0
+          webhook_notifications: {}
         - task_key: gold_star_schema
           depends_on:
             - task_key: silver_transform
