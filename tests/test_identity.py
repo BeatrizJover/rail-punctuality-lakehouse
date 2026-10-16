@@ -37,19 +37,69 @@ def test_monthly_native_wins_over_reference(spark):
     assert (row.ptcar_no, row.status, row.resolution_source) == (100, "resolved", "monthly_native")
 
 
-def test_two_monthly_ptcar_no_is_ambiguous(spark):
+def test_two_ptcar_no_in_the_same_month_is_ambiguous(spark):
     row = resolve(
         spark,
         [obs("MECHELEN", 100, "monthly"), obs("MECHELEN", 101, "monthly", day="2026-08-02")],
         [("100", "Mechelen")],
     ).first()
     assert (row.ptcar_no, row.status, row.resolution_source) == (None, "ambiguous", "monthly_native")
+    assert row.evidence_month == dt.date(2026, 8, 1)
+
+
+def test_batch_with_two_months_resolves_to_the_latest(spark):
+    """A renumbering inside the batch (Jan-Jun = A, Jul-Dec = B) is not ambiguity."""
+    row = resolve(
+        spark,
+        [obs("MECHELEN", 100, "monthly", day="2026-03-10"), obs("MECHELEN", 101, "monthly", day="2026-08-10")],
+        [],
+    ).first()
+    assert (row.ptcar_no, row.status) == (101, "resolved")
+    assert row.evidence_month == dt.date(2026, 8, 1)
+
+
+def test_older_month_does_not_replace_newer_evidence(spark):
+    stored = resolve(spark, [obs("MECHELEN", 101, "monthly", day="2026-08-10")], [])
+    row = resolve(spark, [obs("MECHELEN", 100, "monthly", day="2026-03-10")], [], stored).first()
+    assert (row.ptcar_no, row.evidence_month) == (101, dt.date(2026, 8, 1))
+
+
+def test_newer_month_replaces_stored_evidence_and_resolves_ambiguity(spark):
+    stored = resolve(
+        spark,
+        [obs("MECHELEN", 100, "monthly"), obs("MECHELEN", 101, "monthly", day="2026-08-02")],
+        [],
+    )
+    row = resolve(spark, [obs("MECHELEN", 102, "monthly", day="2026-09-05")], [], stored).first()
+    assert (row.ptcar_no, row.status, row.evidence_month) == (102, "resolved", dt.date(2026, 9, 1))
+
+
+def test_same_month_rerun_with_same_ptcar_no_changes_nothing(spark):
+    observed = [obs("MECHELEN", 100, "monthly")]
+    stored = resolve(spark, observed, [])
+    again = resolve(spark, observed, [], stored)
+    assert alias_upserts(stored, again).count() == 0
+    assert alias_changes(stored, again).count() == 0
+
+
+def test_same_month_rerun_with_another_ptcar_no_replaces_and_logs(spark):
+    stored = resolve(spark, [obs("MECHELEN", 100, "monthly")], [])
+    again = resolve(spark, [obs("MECHELEN", 101, "monthly", day="2026-08-15")], [], stored)
+    assert alias_upserts(stored, again).first().ptcar_no == 101
+    change = alias_changes(stored, again).first()
+    assert (change.old_ptcar_no, change.new_ptcar_no) == (100, 101)
 
 
 def test_reference_cannot_override_monthly_alias(spark):
     first = resolve(spark, [obs("MECHELEN", 100, "monthly")], [])
     row = resolve(spark, [obs("MECHELEN", day="2026-08-02")], [("200", "Mechelen")], first).first()
     assert (row.ptcar_no, row.status, row.resolution_source) == (100, "resolved", "monthly_native")
+
+
+def test_reference_alias_is_kept_when_the_name_leaves_the_reference(spark):
+    stored = resolve(spark, [obs("MECHELEN")], [("200", "Mechelen")])
+    row = resolve(spark, [obs("MECHELEN", day="2026-08-02")], [("300", "Leuven")], stored).first()
+    assert (row.ptcar_no, row.status, row.resolution_source) == (200, "resolved", "operational_point_name")
 
 
 def test_ambiguous_reference_name_is_not_used(spark):

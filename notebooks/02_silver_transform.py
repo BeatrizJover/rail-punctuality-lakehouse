@@ -99,31 +99,34 @@ min_service_date, max_service_date = silver.agg(
 ).first()
 
 if max_service_date is None:
-    print("No valid stop events in the Bronze window — skipping MERGE.")
-else:
-    # Upsert processed events into Silver table using natural key.
-    # The service_date bound lets Delta prune target files outside the window.
-    (
-        DeltaTable.forName(spark, SILVER_STOP)
-        .alias("t")
-        .merge(
-            silver.alias("s"),
-            f"t.service_date >= DATE'{min_service_date}' AND "
-            "t.service_date  = s.service_date AND "
-            "t.train_no      = s.train_no     AND "
-            "t.stop_point_key = s.stop_point_key",
-        )
-        .whenMatchedUpdateAll(
-            condition="(t.source_feed = 'daily' OR s.source_feed = 'monthly') "
-            "AND s._ingested_at > t._ingested_at"
-        )
-        .whenNotMatchedInsertAll()
-        .execute()
+    raise RuntimeError(
+        "Every Bronze row in the window was dropped by the key or station-name filters; "
+        "nothing to merge."
     )
 
-    try:
-        dbutils.jobs.taskValues.set(key="service_date", value=str(max_service_date))
-    except Exception:
-        print("Not running as a job task — skipping task value publish.")
+# Upsert processed events into Silver table using natural key.
+# The service_date bound lets Delta prune target files outside the window.
+(
+    DeltaTable.forName(spark, SILVER_STOP)
+    .alias("t")
+    .merge(
+        silver.alias("s"),
+        f"t.service_date >= DATE'{min_service_date}' AND "
+        "t.service_date  = s.service_date AND "
+        "t.train_no      = s.train_no     AND "
+        "t.stop_point_key = s.stop_point_key",
+    )
+    .whenMatchedUpdateAll(
+        condition="(t.source_feed = 'daily' OR s.source_feed = 'monthly') "
+        "AND s._ingested_at > t._ingested_at"
+    )
+    .whenNotMatchedInsertAll()
+    .execute()
+)
+
+try:
+    dbutils.jobs.taskValues.set(key="service_date", value=str(max_service_date))
+except Exception:
+    print("Not running as a job task — skipping task value publish.")
 
 print(f"{spark.table(SILVER_STOP).count():,} rows in {SILVER_STOP}")

@@ -10,7 +10,7 @@ from src.rail.transforms import normalize_station_name
 
 STATION_ALIAS_SCHEMA = (
     "stop_point_key STRING, stop_point_name_key STRING, stop_point_name STRING, "
-    "ptcar_no INT, status STRING, resolution_source STRING, "
+    "ptcar_no INT, status STRING, resolution_source STRING, evidence_month DATE, "
     "first_seen DATE, last_seen DATE, updated_at TIMESTAMP"
 )
 
@@ -22,7 +22,7 @@ STATION_ALIAS_CHANGES_SCHEMA = (
 
 ALIAS_COLUMNS = [
     "stop_point_key", "stop_point_name_key", "stop_point_name", "ptcar_no",
-    "status", "resolution_source", "first_seen", "last_seen",
+    "status", "resolution_source", "evidence_month", "first_seen", "last_seen",
 ]
 RESOLUTION_COLUMNS = ["ptcar_no", "status", "resolution_source"]
 
@@ -56,18 +56,33 @@ def resolve_station_aliases(
     Returns ALIAS_COLUMNS for the observed keys only.
 
     Precedence: monthly native PTCAR_NO, then a unique reference name, else
-    unresolved. Monthly evidence accumulates with the stored monthly result,
-    so a name seen with two IDs stays ambiguous whatever the backfill order,
-    and the reference never overrides a monthly resolution.
+    unresolved. Monthly evidence is taken from the key's most recent month in
+    the batch, and replaces the stored evidence only when that month is not
+    older than the stored evidence_month, so backfill order does not matter.
+    Two IDs within that month make the key ambiguous. A reference-resolved
+    alias is kept when the reference no longer yields a unique ID, and the
+    reference never overrides a monthly resolution.
     """
     obs = observed.groupBy("stop_point_key").agg(
         F.max("stop_point_name_key").alias("obs_name_key"),
         F.max("stop_point_name").alias("obs_name"),
         F.min("service_date").alias("obs_first_seen"),
         F.max("service_date").alias("obs_last_seen"),
-        # Daily rows carry crosswalk-enriched IDs; only monthly ones are evidence.
-        F.collect_set(F.when(F.col("source_feed") == "monthly", F.col("ptcar_no"))).alias("obs_monthly"),
     )
+
+    # Daily rows carry crosswalk-enriched IDs; only monthly ones are evidence.
+    monthly = (
+        observed.filter((F.col("source_feed") == "monthly") & F.col("ptcar_no").isNotNull())
+        .select("stop_point_key", F.trunc("service_date", "month").alias("month"), "ptcar_no")
+    )
+    latest = monthly.groupBy("stop_point_key").agg(F.max("month").alias("latest_month"))
+    evidence = (
+        monthly.join(latest, "stop_point_key")
+        .filter(F.col("month") == F.col("latest_month"))
+        .groupBy("stop_point_key", F.col("latest_month").alias("ev_month"))
+        .agg(F.collect_set("ptcar_no").alias("ev_ptcars"))
+    )
+
     prev = existing.select(
         "stop_point_key", *[F.col(c).alias(f"prev_{c}") for c in ALIAS_COLUMNS[1:]]
     )
@@ -75,40 +90,45 @@ def resolve_station_aliases(
 
     df = (
         obs.join(prev, "stop_point_key", "left")
+        .join(evidence, "stop_point_key", "left")
         .join(ref, F.col("obs_name_key") == F.col("ref_name_key"), "left")
     )
 
-    prev_monthly = F.col("prev_resolution_source") == "monthly_native"
-    monthly = F.array_distinct(
-        F.concat(
-            F.col("obs_monthly"),
-            F.when(prev_monthly & F.col("prev_ptcar_no").isNotNull(), F.array("prev_ptcar_no"))
-            .otherwise(F.array().cast("array<int>")),
-        )
+    prev_monthly = F.coalesce(F.col("prev_resolution_source") == "monthly_native", F.lit(False))
+    prev_reference = F.coalesce(F.col("prev_resolution_source") == "operational_point_name", F.lit(False))
+    # A NULL stored month (legacy row) counts as the oldest evidence.
+    use_evidence = F.col("ev_month").isNotNull() & (
+        ~prev_monthly
+        | F.col("prev_evidence_month").isNull()
+        | (F.col("ev_month") >= F.col("prev_evidence_month"))
     )
-    ambiguous = (prev_monthly & (F.col("prev_status") == "ambiguous")) | (F.size(monthly) > 1)
-    by_monthly = F.size(monthly) == 1
+    single = F.size("ev_ptcars") == 1
     by_reference = F.col("ref_ptcar_no").isNotNull()
-
-    ptcar_no = (
-        F.when(ambiguous, F.lit(None))
-        .when(by_monthly, F.element_at(monthly, 1))
-        .otherwise(F.col("ref_ptcar_no"))
-        .cast("int")
-    )
+    keep_prev = ~use_evidence & (prev_monthly | (prev_reference & ~by_reference))
 
     return df.select(
         "stop_point_key",
         F.coalesce("prev_stop_point_name_key", "obs_name_key").alias("stop_point_name_key"),
         F.coalesce("prev_stop_point_name", "obs_name").alias("stop_point_name"),
-        ptcar_no.alias("ptcar_no"),
-        F.when(ambiguous, "ambiguous")
-        .when(ptcar_no.isNotNull(), "resolved")
+        F.when(use_evidence & single, F.element_at("ev_ptcars", 1))
+        .when(use_evidence, F.lit(None))
+        .when(keep_prev, F.col("prev_ptcar_no"))
+        .otherwise(F.col("ref_ptcar_no"))
+        .cast("int")
+        .alias("ptcar_no"),
+        F.when(use_evidence & single, "resolved")
+        .when(use_evidence, "ambiguous")
+        .when(keep_prev, F.col("prev_status"))
+        .when(by_reference, "resolved")
         .otherwise("unresolved")
         .alias("status"),
-        F.when(ambiguous | by_monthly, "monthly_native")
+        F.when(use_evidence, "monthly_native")
+        .when(keep_prev, F.col("prev_resolution_source"))
         .when(by_reference, "operational_point_name")
         .alias("resolution_source"),
+        F.when(use_evidence, F.col("ev_month"))
+        .when(keep_prev, F.col("prev_evidence_month"))
+        .alias("evidence_month"),
         F.least("prev_first_seen", "obs_first_seen").alias("first_seen"),
         F.greatest("prev_last_seen", "obs_last_seen").alias("last_seen"),
     )

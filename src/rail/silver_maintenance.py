@@ -21,6 +21,13 @@ def create_station_alias_tables(spark) -> None:
         f"({STATION_ALIAS_CHANGES_SCHEMA}) USING DELTA"
     )
 
+    # Tables created before evidence_month existed.
+    if "evidence_month" not in spark.table(SILVER_STATION_ALIAS).columns:
+        spark.sql(
+            f"ALTER TABLE {SILVER_STATION_ALIAS} "
+            "ADD COLUMNS (evidence_month DATE AFTER resolution_source)"
+        )
+
 
 def refresh_station_aliases(spark, observed: DataFrame) -> None:
     """Resolve the stop points in `observed` (Silver stop_event rows) into
