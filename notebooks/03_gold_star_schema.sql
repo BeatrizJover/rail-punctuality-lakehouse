@@ -87,6 +87,7 @@ WHEN NOT MATCHED THEN INSERT *;
 CREATE TABLE IF NOT EXISTS gold.fact_stop_event (
     date_key          DATE,
     station_key       STRING,
+    stop_point_key    STRING,
     relation_key      STRING,
     train_no          INT,
     planned_hour      INT,
@@ -107,6 +108,7 @@ USING (
     SELECT
         s.service_date   AS date_key,
         s.stop_point_key AS station_key,
+        s.stop_point_key,
         md5(concat_ws('|', s.relation, s.relation_direction, s.operator)) AS relation_key,
         s.train_no,
         s.planned_hour,
@@ -120,7 +122,7 @@ USING (
 ) s
 ON  t.date_key    = run_service_date
 AND t.date_key    = s.date_key
-AND t.station_key = s.station_key
+AND t.stop_point_key = s.stop_point_key
 AND t.train_no    = s.train_no
 WHEN MATCHED THEN UPDATE SET *
 WHEN NOT MATCHED THEN INSERT *;
