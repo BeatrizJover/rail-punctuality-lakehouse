@@ -5,11 +5,12 @@ using the exact layout the Blob export produces. This is the same contract with 
 different transport: when Blob credentials are available, only `EXPORT_ROOT`
 changes and the consumer is unaffected.
 
-    {root}/gold/fact_stop_event/date_key=YYYY-MM-DD/*.parquet
-    {root}/gold/dim_date/*.parquet
-    {root}/gold/dim_station/*.parquet
-    {root}/gold/dim_relation/*.parquet
-    {root}/gold/_manifest/coverage.json
+    {root}/gold_v2/fact_stop_event/date_key=YYYY-MM-DD/*.parquet
+    {root}/gold_v2/dim_date/*.parquet
+    {root}/gold_v2/dim_station/*.parquet
+    {root}/gold_v2/dim_relation/*.parquet
+    {root}/gold_v2/_manifest/coverage.json
+    {root}/gold_v2/_fixtures/{fact_stop_event,dim_station}/*.parquet
 
 The manifest is written by the producer, never assembled by the consumer: coverage
 is a property of what was published, and deriving it downstream would let the two
@@ -22,7 +23,10 @@ Prerequisite (run once):
 Download with the Databricks CLI:
 
     databricks fs cp -r \
-      dbfs:/Volumes/<catalog>/gold/export/gold ./gold
+      dbfs:/Volumes/<catalog>/gold/export/gold_v2 ./gold_v2
+
+`_fixtures` holds the RAG's test fixtures, not part of the export: copy each
+single part file to its tests/fixtures/gold_parquet/<table>.parquet.
 
 Idempotency: the fact is written with dynamic partition overwrite, so re-exporting
 a range rewrites only the affected date partitions. Dimensions are overwritten whole.
@@ -52,7 +56,10 @@ GOLD_DIM_STATION = f"{GOLD}.dim_station"
 GOLD_DIM_RELATION = f"{GOLD}.dim_relation"
 
 # Published export layout — the RAG loader mirrors this structure verbatim.
-EXPORT_PREFIX = "gold"
+# Bumped on every breaking change. Each version publishes to its own prefix, so
+# partitions from two contracts never share a dataset.
+CONTRACT_VERSION = 2
+EXPORT_PREFIX = f"gold_v{CONTRACT_VERSION}"
 DIMENSIONS = [
     (GOLD_DIM_DATE, "dim_date"),
     (GOLD_DIM_STATION, "dim_station"),
@@ -145,6 +152,7 @@ bounds = fact.agg(
 ).first()
 
 manifest = {
+    "contract_version": CONTRACT_VERSION,
     "exported_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "requested_range": {"start": range_start, "end": range_end},
     "fact_stop_event": {
@@ -229,3 +237,28 @@ print(f"\ndim_station — {station_total:,} rows")
 for col in ["ptcar_no", "station_name"]:
     n = station_nulls[col]
     print(f"  {col:<16} nulls: {n:>12,}  ({100 * n / station_total:.4f}%)")
+
+# COMMAND ----------
+
+# RAG test fixtures: one fact row per stop point on the latest service date, 100
+# in all, and a dim_station covering every key they reference plus the -1 member,
+# so the fixtures keep referential integrity.
+from pyspark.sql import Window
+
+FIXTURE_ROWS = 100
+
+first_per_point = Window.partitionBy("stop_point_key").orderBy("train_no")
+fixture_fact = (
+    fact.filter(F.col("date_key") == bounds["max_date"])
+    .withColumn("rn", F.row_number().over(first_per_point))
+    .filter("rn = 1")
+    .drop("rn")
+    .orderBy("stop_point_key")
+    .limit(FIXTURE_ROWS)
+)
+referenced = fixture_fact.select("station_key").union(spark.createDataFrame([(-1,)], "station_key INT"))
+fixture_station = station.join(referenced.distinct(), "station_key")
+
+for df, folder in [(fixture_fact, "fact_stop_event"), (fixture_station, "dim_station")]:
+    df.coalesce(1).write.mode("overwrite").parquet(f"{base}/_fixtures/{folder}")
+    print(f"fixture {folder}: {df.count()} rows -> {base}/_fixtures/{folder}")

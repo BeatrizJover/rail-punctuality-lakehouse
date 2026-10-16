@@ -49,7 +49,10 @@ GOLD_DIM_STATION = f"{GOLD}.dim_station"
 GOLD_DIM_RELATION = f"{GOLD}.dim_relation"
 
 # Published export layout — the RAG loader mirrors this structure from Blob.
-EXPORT_PREFIX = "gold"
+# Bumped on every breaking change. Each version publishes to its own prefix, so
+# partitions from two contracts never share a dataset.
+CONTRACT_VERSION = 2
+EXPORT_PREFIX = f"gold_v{CONTRACT_VERSION}"
 
 # COMMAND ----------
 
@@ -162,6 +165,7 @@ bounds = fact.agg(
 ).first()
 
 manifest = {
+    "contract_version": CONTRACT_VERSION,
     "exported_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "requested_range": {"start": range_start, "end": range_end},
     "fact_stop_event": {
