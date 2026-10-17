@@ -219,7 +219,7 @@ Monthly exports (~2M rows each) are loaded by hand, one year per run, outside th
 
 ## Data Quality
 
-Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, rows failed, failure percentage and verdict. Rules are failure conditions, so `rows_failed == 0` means PASS.
+Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, rows failed, failure percentage and verdict. Rules are failure conditions, so `rows_failed == 0` means PASS. An assertion over 0 rows fails.
 
 | Layer | Rule | Catches / measures | Scope |
 |---|---|---|---|
@@ -299,7 +299,7 @@ The stop-event count on the page reads lower than the ~70M rows in `fact_stop_ev
 | **Bronze Layer** | Station classification — `dim_station` carries `station_type`, `is_passenger` and coordinates, derived from the Infrabel operating-point reference and the operator's station list | ✅ Done | — |
 | **Silver Layer** | Bounded Bronze read window — the daily run reads only the last 5 days of Bronze ingestion, rewrites only newer rows, drops blank station names, and fails loudly on an empty window or a processing gap | ✅ Done | — |
 | **Silver Layer** | Station identity — Gold keyed on `PTCAR_NO` through `silver.station_alias`, resolved from every loaded month and the official reference; replaces the single-month `01b` crosswalk | ✅ Done | — |
-| **Data Quality** | Empty-partition rule — row-level checks read as PASS on a day with zero rows | ⏳ Pending | High |
+| **Data Quality** | Empty-partition rule — an assertion over 0 rows writes `passed = false` | ✅ Done | — |
 | **Data Quality** | Alert on failed assertions — outcomes are recorded, not enforced | ⏳ Pending | Medium |
 | **Data Quality** | Decouple the coverage verdict from the assertion verdict in `ops.dq_results` | ✅ Done | — |
 | **Data Quality** | Freshness validation (`max(service_date)`) & historical audit job covering backfilled dates — the Bronze guard covers the daily fetch, Silver-level freshness is still open | ⏳ Pending | Medium |

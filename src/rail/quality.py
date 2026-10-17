@@ -36,6 +36,7 @@ def evaluate_checks(
 
     `failing_expr` describes rows that VIOLATE the rule — rows_failed == 0 means PASS.
     With `metric=True`, `passed` is NULL: the rule is measured, not asserted.
+    An assertion over 0 rows fails: no data is not a healthy day.
     Returns one result row per check, matching DQ_RESULT_SCHEMA.
     """
     total = df.count()
@@ -50,7 +51,7 @@ def evaluate_checks(
                 total,
                 failed,
                 round(100 * failed / total, 4) if total else 0.0,
-                None if metric else failed == 0,
+                None if metric else (total > 0 and failed == 0),
             )
         )
     return rows

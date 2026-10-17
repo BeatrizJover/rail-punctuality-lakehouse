@@ -26,3 +26,19 @@ def test_evaluate_checks_assertion_passes_when_clean(spark):
     checks = [("unresolved_station_key", "station_key = -1")]
     rows = evaluate_checks(df, "gold.fact", checks, dt.datetime.now())
     assert rows[0][6] is True    # passed
+
+
+def test_evaluate_checks_assertion_fails_when_empty(spark):
+    df = spark.createDataFrame([], "train_no string")
+    checks = [("not_null_keys", "train_no IS NULL")]
+    rows = evaluate_checks(df, "silver.stop_event", checks, dt.datetime.now())
+    assert rows[0][3:6] == (0, 0, 0.0)
+    assert rows[0][6] is False   # passed
+
+
+def test_evaluate_checks_metric_stays_null_when_empty(spark):
+    df = spark.createDataFrame([], "station_key int")
+    checks = [("unresolved_station_key", "station_key = -1")]
+    rows = evaluate_checks(df, "gold.fact", checks, dt.datetime.now(), metric=True)
+    assert rows[0][3:6] == (0, 0, 0.0)
+    assert rows[0][6] is None    # passed
