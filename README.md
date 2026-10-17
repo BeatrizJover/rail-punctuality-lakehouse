@@ -228,7 +228,7 @@ Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, 
 | Silver | `arrival_without_plan` | Actual arrival with no planned counterpart | Run's `service_date` |
 | Silver | `unknown_station` | Missing or empty station name | Run's `service_date` |
 | Gold | `unresolved_station_key` | Fact rows not yet resolved to a `PTCAR_NO` (`station_key = -1`) | Run's `service_date` |
-| Bronze | `unexpected_source_columns` | Upstream schema drift, via Auto Loader's `_rescued_data` | Full table |
+| Bronze | `unexpected_source_columns` | Upstream schema drift, via Auto Loader's `_rescued_data` | Last 5 days of ingestion (`_ingested_at`), as read by Silver |
 
 - **Drift is a signal, not a failure.** Bronze ingests in rescue mode, so a new upstream column lands in `_rescued_data` and this rule reports it.
 - **Coverage is a metric, not an alert.** `unresolved_station_key` should stay near zero. It writes `passed = NULL`; read it through `pct_failed`.
@@ -303,7 +303,7 @@ The stop-event count on the page reads lower than the ~70M rows in `fact_stop_ev
 | **Data Quality** | Alert on failed assertions — outcomes are recorded, not enforced | ⏳ Pending | Medium |
 | **Data Quality** | Decouple the coverage verdict from the assertion verdict in `ops.dq_results` | ✅ Done | — |
 | **Data Quality** | Freshness validation (`max(service_date)`) & historical audit job covering backfilled dates — the Bronze guard covers the daily fetch, Silver-level freshness is still open | ⏳ Pending | Medium |
-| **Data Quality** | Bound the Bronze schema-drift check to the current ingestion batch | ⏳ Pending | Low |
+| **Data Quality** | Bronze schema-drift check bounded to Silver's 5-day ingestion window | ✅ Done | — |
 | **Gold Layer** | Incremental maintenance — `fact_stop_event` and `dim_relation` by `MERGE`, `dim_station` rebuilt from the aliases; no full Silver scan | ✅ Done | — |
 | **Gold Layer** | Extend `dim_date` beyond 2027-12-31 — it is generated once with `CREATE TABLE IF NOT EXISTS` | ⏳ Pending | Medium |
 | **Backfill** | Year-scoped monthly ingest and Silver / Gold backfill (`01c`, `91`) | ✅ Done | — |

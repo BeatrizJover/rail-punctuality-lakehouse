@@ -7,8 +7,9 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import datetime as dt
-from src.rail.config import BRONZE_RAW, SILVER_STOP, DQ_RESULTS
+from src.rail.config import BRONZE_LOOKBACK_DAYS, BRONZE_RAW, SILVER_STOP, DQ_RESULTS
 from src.rail.quality import SILVER_CHECKS, BRONZE_CHECKS, DQ_RESULT_SCHEMA, evaluate_checks
+from src.rail.transforms import within_lookback
 
 service_date = dbutils.jobs.taskValues.get(
     taskKey="silver_transform",
@@ -26,6 +27,8 @@ for table, checks in [(SILVER_STOP, SILVER_CHECKS), (BRONZE_RAW, BRONZE_CHECKS)]
     df = spark.table(table)
     if table == SILVER_STOP:
         df = df.filter(f"service_date = '{service_date}'")
+    else:
+        df = within_lookback(df, BRONZE_LOOKBACK_DAYS)
     rows.extend(evaluate_checks(df, table, checks, run_ts))
 
 # Append execution metrics to operational tracking table
