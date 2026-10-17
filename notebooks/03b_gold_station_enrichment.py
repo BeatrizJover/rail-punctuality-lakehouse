@@ -41,5 +41,5 @@ if service_date is None:
     raise ValueError("No service_date received from silver_transform task value.")
 
 fact_scoped = spark.table(GOLD_FACT).filter(F.col("date_key") == F.to_date(F.lit(service_date)))
-rows = evaluate_checks(fact_scoped, GOLD_FACT, GOLD_COVERAGE, dt.datetime.now())
+rows = evaluate_checks(fact_scoped, GOLD_FACT, GOLD_COVERAGE, dt.datetime.now(), metric=True)
 spark.createDataFrame(rows, DQ_RESULT_SCHEMA).write.mode("append").saveAsTable(DQ_RESULTS)

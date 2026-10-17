@@ -26,11 +26,16 @@ DQ_RESULT_SCHEMA = (
 
 
 def evaluate_checks(
-    df: DataFrame, table_name: str, checks: list[tuple[str, str]], run_ts: dt.datetime
+    df: DataFrame,
+    table_name: str,
+    checks: list[tuple[str, str]],
+    run_ts: dt.datetime,
+    metric: bool = False,
 ) -> list[tuple]:
     """Run (check_name, failing_condition) rules against a DataFrame.
 
     `failing_expr` describes rows that VIOLATE the rule — rows_failed == 0 means PASS.
+    With `metric=True`, `passed` is NULL: the rule is measured, not asserted.
     Returns one result row per check, matching DQ_RESULT_SCHEMA.
     """
     total = df.count()
@@ -45,7 +50,7 @@ def evaluate_checks(
                 total,
                 failed,
                 round(100 * failed / total, 4) if total else 0.0,
-                failed == 0,
+                None if metric else failed == 0,
             )
         )
     return rows

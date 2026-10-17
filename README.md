@@ -231,7 +231,7 @@ Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, 
 | Bronze | `unexpected_source_columns` | Upstream schema drift, via Auto Loader's `_rescued_data` | Full table |
 
 - **Drift is a signal, not a failure.** Bronze ingests in rescue mode, so a new upstream column lands in `_rescued_data` and this rule reports it.
-- **Coverage is a metric, not an alert.** `unresolved_station_key` should stay near zero; read it through `pct_failed`, not its verdict.
+- **Coverage is a metric, not an alert.** `unresolved_station_key` should stay near zero. It writes `passed = NULL`; read it through `pct_failed`.
 - **Scoped to the run's `service_date`**, passed as a task value by `silver_transform`: no full scans, safe on reruns and backfills.
 - **Observational.** Failed rules are recorded, not raised, and backfilled dates are not evaluated. Both gaps are on the [Roadmap](#roadmap).
 
@@ -301,7 +301,7 @@ The stop-event count on the page reads lower than the ~70M rows in `fact_stop_ev
 | **Silver Layer** | Station identity — Gold keyed on `PTCAR_NO` through `silver.station_alias`, resolved from every loaded month and the official reference; replaces the single-month `01b` crosswalk | ✅ Done | — |
 | **Data Quality** | Empty-partition rule — row-level checks read as PASS on a day with zero rows | ⏳ Pending | High |
 | **Data Quality** | Alert on failed assertions — outcomes are recorded, not enforced | ⏳ Pending | Medium |
-| **Data Quality** | Decouple the coverage verdict from the assertion verdict in `ops.dq_results` | ⏳ Pending | Medium |
+| **Data Quality** | Decouple the coverage verdict from the assertion verdict in `ops.dq_results` | ✅ Done | — |
 | **Data Quality** | Freshness validation (`max(service_date)`) & historical audit job covering backfilled dates — the Bronze guard covers the daily fetch, Silver-level freshness is still open | ⏳ Pending | Medium |
 | **Data Quality** | Bound the Bronze schema-drift check to the current ingestion batch | ⏳ Pending | Low |
 | **Gold Layer** | Incremental maintenance — `fact_stop_event` and `dim_relation` by `MERGE`, `dim_station` rebuilt from the aliases; no full Silver scan | ✅ Done | — |
