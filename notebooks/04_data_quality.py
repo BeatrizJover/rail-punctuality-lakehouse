@@ -8,7 +8,9 @@ if REPO_ROOT not in sys.path:
 
 import datetime as dt
 from src.rail.config import BRONZE_LOOKBACK_DAYS, BRONZE_RAW, SILVER_STOP, DQ_RESULTS
-from src.rail.quality import SILVER_CHECKS, BRONZE_CHECKS, DQ_RESULT_SCHEMA, evaluate_checks
+from src.rail.quality import (
+    SILVER_CHECKS, BRONZE_CHECKS, DQ_RESULT_SCHEMA, evaluate_checks, blocking_failures,
+)
 from src.rail.transforms import within_lookback
 
 service_date = dbutils.jobs.taskValues.get(
@@ -38,3 +40,12 @@ for table, checks in [(SILVER_STOP, SILVER_CHECKS), (BRONZE_RAW, BRONZE_CHECKS)]
     .saveAsTable(DQ_RESULTS)
 )
 display(spark.table(DQ_RESULTS).orderBy("run_ts", ascending=False).limit(20))
+
+failures = blocking_failures(rows)
+if failures:
+    raise RuntimeError(
+        "Blocking DQ checks failed: " + "; ".join(
+            f"{table}.{check} rows_failed={failed} pct_failed={pct}"
+            for _, table, check, _, failed, pct, _ in failures
+        )
+    )

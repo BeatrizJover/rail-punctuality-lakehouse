@@ -19,6 +19,14 @@ BRONZE_CHECKS = [
     ("unexpected_source_columns", "_rescued_data IS NOT NULL"),
 ]
 
+# Assertions that fail the job, with the pct_failed they tolerate.
+BLOCKING_CHECKS = {
+    "not_null_keys":        0.0,
+    "delay_in_range":       0.1,
+    "arrival_without_plan": 0.0,
+    "unknown_station":      0.0,
+}
+
 DQ_RESULT_SCHEMA = (
     "run_ts timestamp, table_name string, check_name string, rows_checked long, "
     "rows_failed long, pct_failed double, passed boolean"
@@ -55,3 +63,16 @@ def evaluate_checks(
             )
         )
     return rows
+
+
+def blocking_failures(rows: list[tuple]) -> list[tuple]:
+    """Return the failed blocking assertions above their tolerance.
+
+    Metrics (passed = NULL) and non-blocking rules never block. A run over 0 rows always does.
+    """
+    return [
+        row for row in rows
+        if row[6] is False
+        and row[2] in BLOCKING_CHECKS
+        and (row[3] == 0 or 100 * row[4] / row[3] > BLOCKING_CHECKS[row[2]])
+    ]

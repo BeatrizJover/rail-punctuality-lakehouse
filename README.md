@@ -233,7 +233,7 @@ Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, 
 - **Drift is a signal, not a failure.** Bronze ingests in rescue mode, so a new upstream column lands in `_rescued_data` and this rule reports it.
 - **Coverage is a metric, not an alert.** `unresolved_station_key` should stay near zero. It writes `passed = NULL`; read it through `pct_failed`.
 - **Scoped to the run's `service_date`**, passed as a task value by `silver_transform`: no full scans, safe on reruns and backfills.
-- **Observational.** Failed rules are recorded, not raised, and backfilled dates are not evaluated. Both gaps are on the [Roadmap](#roadmap).
+- **Blocking.** Results are written first, then the task fails if a Silver assertion fails. `delay_in_range` tolerates up to 0.1 % outliers, the rest tolerate none. Schema drift (`unexpected_source_columns`) stays a signal. Backfilled dates are still not evaluated; see the [Roadmap](#roadmap).
 
 Rules live in `src/rail/quality.py` and are unit-tested without a Databricks session.
 
@@ -300,7 +300,7 @@ The stop-event count on the page reads lower than the ~70M rows in `fact_stop_ev
 | **Silver Layer** | Bounded Bronze read window — the daily run reads only the last 5 days of Bronze ingestion, rewrites only newer rows, drops blank station names, and fails loudly on an empty window or a processing gap | ✅ Done | — |
 | **Silver Layer** | Station identity — Gold keyed on `PTCAR_NO` through `silver.station_alias`, resolved from every loaded month and the official reference; replaces the single-month `01b` crosswalk | ✅ Done | — |
 | **Data Quality** | Empty-partition rule — an assertion over 0 rows writes `passed = false` | ✅ Done | — |
-| **Data Quality** | Alert on failed assertions — outcomes are recorded, not enforced | ⏳ Pending | Medium |
+| **Data Quality** | Alert on failed assertions — the task fails and the job emails on failure | ✅ Done | Medium |
 | **Data Quality** | Decouple the coverage verdict from the assertion verdict in `ops.dq_results` | ✅ Done | — |
 | **Data Quality** | Freshness validation (`max(service_date)`) & historical audit job covering backfilled dates — the Bronze guard covers the daily fetch, Silver-level freshness is still open | ⏳ Pending | Medium |
 | **Data Quality** | Bronze schema-drift check bounded to Silver's 5-day ingestion window | ✅ Done | — |
