@@ -70,6 +70,7 @@ DIMENSIONS = [
 
 dbutils.widgets.text("start_year", "2024", "Start year (YYYY)")
 dbutils.widgets.text("end_year", "2026", "End year (YYYY)")
+dbutils.widgets.text("end_date", "", "End date (YYYY-MM-DD, optional, overrides end_year)")
 dbutils.widgets.text(
     "export_root",
     f"/Volumes/{CATALOG}/gold/export",
@@ -78,6 +79,7 @@ dbutils.widgets.text(
 
 start_year = dbutils.widgets.get("start_year").strip()
 end_year = dbutils.widgets.get("end_year").strip()
+end_date = dbutils.widgets.get("end_date").strip()
 export_root = dbutils.widgets.get("export_root").strip().rstrip("/")
 
 for name, value in [("start_year", start_year), ("end_year", end_year)]:
@@ -90,6 +92,10 @@ if not export_root:
 
 range_start = f"{start_year}-01-01"
 range_end = f"{end_year}-12-31"
+if end_date:
+    range_end = dt.date.fromisoformat(end_date).isoformat()
+    if range_end < range_start:
+        raise ValueError(f"end_date {range_end} is before {range_start}")
 base = f"{export_root}/{EXPORT_PREFIX}"
 
 print(f"Exporting Gold for service dates {range_start} .. {range_end}")

@@ -58,6 +58,7 @@ EXPORT_PREFIX = f"gold_v{CONTRACT_VERSION}"
 
 dbutils.widgets.text("start_year", "2024", "Start year (YYYY)")
 dbutils.widgets.text("end_year", "2026", "End year (YYYY)")
+dbutils.widgets.text("end_date", "", "End date (YYYY-MM-DD, optional, overrides end_year)")
 dbutils.widgets.text("storage_account", "", "Azure storage account name")
 dbutils.widgets.text("container", "", "Blob container name")
 dbutils.widgets.text("secret_scope", "rail_export", "Databricks secret scope")
@@ -65,6 +66,7 @@ dbutils.widgets.text("secret_key", "blob_sas_token", "Secret key holding the SAS
 
 start_year = dbutils.widgets.get("start_year").strip()
 end_year = dbutils.widgets.get("end_year").strip()
+end_date = dbutils.widgets.get("end_date").strip()
 storage_account = dbutils.widgets.get("storage_account").strip()
 container = dbutils.widgets.get("container").strip()
 secret_scope = dbutils.widgets.get("secret_scope").strip()
@@ -80,6 +82,10 @@ if not storage_account or not container:
 
 range_start = f"{start_year}-01-01"
 range_end = f"{end_year}-12-31"
+if end_date:
+    range_end = dt.date.fromisoformat(end_date).isoformat()
+    if range_end < range_start:
+        raise ValueError(f"end_date {range_end} is before {range_start}")
 
 print(f"Exporting Gold for service dates {range_start} .. {range_end}")
 
