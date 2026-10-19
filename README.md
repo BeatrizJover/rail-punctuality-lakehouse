@@ -295,7 +295,7 @@ The stop-event count on the page reads lower than the ~70M rows in `fact_stop_ev
 | **Silver Layer** | Bounded Bronze read window — the daily run reads only the last 5 days of Bronze ingestion, rewrites only newer rows, drops blank station names, and fails loudly on an empty window or a processing gap | ✅ Done | — |
 | **Silver Layer** | Station identity — Gold keyed on `PTCAR_NO` through `silver.station_alias`, resolved from every loaded month and the official reference; replaces the single-month `01b` crosswalk | ✅ Done | — |
 | **Data Quality** | Empty-partition rule — an assertion over 0 rows writes `passed = false` | ✅ Done | — |
-| **Data Quality** | Alert on failed assertions — the task fails and the job emails on failure | ✅ Done | Medium |
+| **Data Quality** | Alert on failed assertions — the task fails and the job emails on failure | ✅ Done | — |
 | **Data Quality** | Decouple the coverage verdict from the assertion verdict in `ops.dq_results` | ✅ Done | — |
 | **Data Quality** | Freshness validation (`max(service_date)`) & historical audit job covering backfilled dates — the Bronze guard covers the daily fetch, Silver-level freshness is still open | ⏳ Pending | Medium |
 | **Data Quality** | Bronze schema-drift check bounded to Silver's 5-day ingestion window | ✅ Done | — |
@@ -304,7 +304,7 @@ The stop-event count on the page reads lower than the ~70M rows in `fact_stop_ev
 | **Backfill** | Year-scoped monthly ingest and Silver / Gold backfill (`01c`, `91`) | ✅ Done | — |
 | **Backfill** | Replace configuration constants in `90` with validated widgets | ⏳ Pending | Low |
 | **Publishing** | Date-partitioned Gold Parquet export with coverage manifest | ✅ Done | — |
-| **Publishing** | Contract v2 — re-export under `gold_v2/` with `PTCAR_NO` station keys, coordinated with the RAG cut-over | ⏳ Pending | High |
+| **Publishing** | Contract v2 — re-export under `gold_v2/` with `PTCAR_NO` station keys, coordinated with the RAG cut-over | ✅ Done | — |
 | **Publishing** | Azure Blob transport (`92`) — implemented; storage account and secret scope not configured | ⏳ Pending | Low |
 | **Platform** | Environment isolation — the catalog name is hard-coded in `config.py`, the SQL notebooks and several Python notebooks, and the bundle's `catalog` / `schema` variables are declared but not consumed, so `dev` and `prod` targets write to the same catalog | ✅ Done | — |
 | **Platform** | CI: pytest and ruff on every push via GitHub Actions | ✅ Done | — |
