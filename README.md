@@ -177,14 +177,7 @@ rail-punctuality-lakehouse/
 
 Runs daily at **10:00 Europe/Brussels** on serverless compute. The job is defined in `resources/rail_punctuality_daily.job.yml` and deployed with Databricks Asset Bundles; no manual edits in the workspace.
 
-```mermaid
-flowchart LR
-    A[bronze_ingest] --> B[silver_transform]
-    B --> F[station_identity]
-    F --> C[gold_star_schema]
-    C --> E[gold_station_enrichment]
-    B --> D[data_quality]
-```
+![Job task graph](docs/img/job_tasks.png)
 
 | Task | Purpose |
 |---|---|
@@ -199,7 +192,7 @@ Failure notifications are configured at job level. The schedule sits after Infra
 
 ![Job run history](docs/img/job_runs.png)
 
-*Early-September duration spikes (~22 min vs. ~3 min baseline) came from ad-hoc backfills run right before the daily job.*
+*The ~3 h runs (Sep 25, Sep 28, Oct 5) are `bronze_ingest` retrying hourly until a late D-1 export was published, under the earlier 07:00 schedule. Since the move to 10:00, a run takes 4–5 min.*
 
 ### Backfill and publishing (ad-hoc)
 
@@ -218,6 +211,8 @@ Monthly exports (~2M rows each) are loaded by hand, one year per run, outside th
 - Do not run backfills right before the scheduled job: `max_concurrent_runs: 1` does not serialize them against it.
 
 ## Data Quality
+
+![How data quality works](docs/img/data_quality_flow.png)
 
 Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, rows failed, failure percentage and verdict. Rules are failure conditions, so `rows_failed == 0` means PASS. An assertion over 0 rows fails.
 
