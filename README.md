@@ -212,8 +212,6 @@ Monthly exports (~2M rows each) are loaded by hand, one year per run, outside th
 
 ## Data Quality
 
-![How data quality works](docs/img/data_quality_flow.png)
-
 Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, rows failed, failure percentage and verdict. Rules are failure conditions, so `rows_failed == 0` means PASS. An assertion over 0 rows fails.
 
 | Layer | Rule | Catches / measures | Scope |
@@ -229,8 +227,6 @@ Every scheduled run appends one row per rule to `ops.dq_results`: rows checked, 
 - **Coverage is a metric, not an alert.** `unresolved_station_key` should stay near zero. It writes `passed = NULL`; read it through `pct_failed`.
 - **Scoped to the run's `service_date`**, passed as a task value by `silver_transform`: no full scans, safe on reruns and backfills.
 - **Blocking.** Results are written first, then the task fails if a Silver assertion fails. `delay_in_range` tolerates up to 0.1 % outliers, the rest tolerate none. Schema drift (`unexpected_source_columns`) stays a signal. Backfilled dates are still not evaluated; see the [Roadmap](#roadmap).
-
-Rules live in `src/rail/quality.py` and are unit-tested without a Databricks session.
 
 ## Usage
 
